@@ -1,0 +1,6 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens (docs/FRONTEND_ARCHITECTURE.md Section 11) land here as
+   tokens.css once the dedicated Design System document is approved. */

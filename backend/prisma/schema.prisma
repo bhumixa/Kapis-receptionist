@@ -1,0 +1,91 @@
+// Prisma schema — see docs/PRISMA_SCHEMA.md for the full design.
+//
+// Milestone 1 scope only: the "global reference data" migration batch
+// (docs/PRISMA_SCHEMA.md Section 14.2, step 1) — Role, Permission,
+// RolePermission, Plan. Every other domain's models are added in the
+// milestone that implements them, each as its own migration, per the
+// documented migration order.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearchPostgres", "relationJoins", "postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgcrypto]
+}
+
+// --- Enums (docs/PRISMA_SCHEMA.md Section 2) -------------------------------
+
+enum RoleName {
+  SUPER_ADMIN
+  OWNER
+  MANAGER
+  STAFF
+}
+
+// --- Authentication Models (docs/PRISMA_SCHEMA.md Section 3) ---------------
+// User/UserRole are deferred to Milestone 2 (Identity, migration order step 4)
+// — Role/Permission/RolePermission have no dependency on them.
+
+model Role {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        RoleName @unique
+  description String?  @db.VarChar(255)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key         String   @unique @db.VarChar(100)
+  description String?  @db.VarChar(255)
+  createdAt   DateTime @default(now())
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  roleId       String   @db.Uuid
+  permissionId String   @db.Uuid
+  createdAt    DateTime @default(now())
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId], name: "uq_role_permissions_role_permission")
+  @@index([permissionId], name: "idx_role_permissions_permission_id")
+  @@map("role_permissions")
+}
+
+// --- Billing Models (docs/PRISMA_SCHEMA.md Section 10) ---------------------
+// Subscription/Invoice/Payment/Coupon are deferred to Milestone 8 — Plan has
+// no dependency on them (its back-relation to Subscription is added when
+// Subscription's migration lands).
+
+model Plan {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                String   @db.VarChar(50)
+  stripePriceId       String   @unique @db.VarChar(100)
+  monthlyPriceCents   Int
+  currency            String   @default("USD") @db.Char(3)
+  maxStaff            Int?
+  maxMessagesPerMonth Int?
+  maxLocations        Int      @default(1)
+  isActive            Boolean  @default(true)
+  trialDays           Int      @default(14)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([isActive], name: "idx_plans_is_active")
+  @@map("plans")
+}

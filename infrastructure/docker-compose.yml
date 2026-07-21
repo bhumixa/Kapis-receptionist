@@ -1,0 +1,121 @@
+# Local development stack (docs/SYSTEM_ARCHITECTURE.md Section 10.2).
+# Production topology (static frontend build served directly by nginx,
+# hardened images) is a Milestone 10 concern — docker-compose.prod.yml,
+# not this file.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kapis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kapis_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-kapis_receptionist}
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-kapis}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - kapis
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - kapis
+
+  backend:
+    build:
+      context: ../backend
+      target: development
+    restart: unless-stopped
+    env_file:
+      - ../backend/.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-kapis}:${POSTGRES_PASSWORD:-kapis_dev_password}@postgres:5432/${POSTGRES_DB:-kapis_receptionist}?schema=public
+      REDIS_URL: redis://redis:6379
+    ports:
+      - '3000:3000'
+    volumes:
+      - ../backend:/app
+      - backend_node_modules:/app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3000/health || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - kapis
+
+  frontend:
+    build:
+      context: ../frontend
+      target: development
+    restart: unless-stopped
+    ports:
+      - '4200:4200'
+    volumes:
+      - ../frontend:/app
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      - backend
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:4200/ || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - kapis
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - '8080:80'
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:80/health || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - kapis
+
+networks:
+  kapis:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  backend_node_modules:
+  frontend_node_modules:
