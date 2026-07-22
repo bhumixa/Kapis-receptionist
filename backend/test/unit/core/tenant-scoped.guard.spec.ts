@@ -1,46 +1,36 @@
-import { ExecutionContext } from '@nestjs/common';
-import { RoleName } from '@prisma/client';
 import { InvalidTenantContextException } from '../../../src/core/guards/rbac.exceptions';
+import { TenantContextService } from '../../../src/core/context/tenant-context.service';
 import { TenantScopedGuard } from '../../../src/core/guards/tenant-scoped.guard';
-import { AccessTokenPayload } from '../../../src/modules/auth/application/token.service';
 
-function makeContext(user: AccessTokenPayload): ExecutionContext {
-  return {
-    switchToHttp: () => ({ getRequest: () => ({ user }) }),
-  } as unknown as ExecutionContext;
-}
-
+/**
+ * Milestone 3 (docs/adr/ADR-006): `TenantScopedGuard` now delegates entirely
+ * to `TenantContextService.requireTenantId()` — its own behavior (SUPER_ADMIN
+ * bypass, impersonation, spoofing protection) is unit-tested directly against
+ * `TenantContextService` (see `tenant-context.service.spec.ts`); this guard's
+ * own test only needs to prove it calls through correctly and propagates
+ * `InvalidTenantContextException`.
+ */
 describe('TenantScopedGuard', () => {
-  const guard = new TenantScopedGuard();
+  function makeGuard(
+    tenantContext: Pick<TenantContextService, 'requireTenantId'>,
+  ): TenantScopedGuard {
+    return new TenantScopedGuard(tenantContext as TenantContextService);
+  }
 
-  it('allows SUPER_ADMIN unconditionally, even with a null tenantId', () => {
-    const context = makeContext({
-      sub: 'admin-1',
-      email: 'admin@platform.com',
-      tenantId: null,
-      roles: [RoleName.SUPER_ADMIN],
+  it('passes when TenantContextService resolves a tenant', async () => {
+    const guard = makeGuard({
+      requireTenantId: jest.fn().mockResolvedValue('tenant-1'),
     });
-    expect(guard.canActivate(context)).toBe(true);
+    await expect(guard.canActivate()).resolves.toBe(true);
   });
 
-  it('allows a non-SUPER_ADMIN user with a resolvable tenantId', () => {
-    const context = makeContext({
-      sub: 'user-1',
-      email: 'owner@salon.com',
-      tenantId: 'tenant-1',
-      roles: [RoleName.OWNER],
+  it('propagates InvalidTenantContextException when no tenant resolves', async () => {
+    const guard = makeGuard({
+      requireTenantId: jest
+        .fn()
+        .mockRejectedValue(new InvalidTenantContextException()),
     });
-    expect(guard.canActivate(context)).toBe(true);
-  });
-
-  it('throws for a non-SUPER_ADMIN user with a null tenantId', () => {
-    const context = makeContext({
-      sub: 'user-1',
-      email: 'orphan@salon.com',
-      tenantId: null,
-      roles: [RoleName.STAFF],
-    });
-    expect(() => guard.canActivate(context)).toThrow(
+    await expect(guard.canActivate()).rejects.toBeInstanceOf(
       InvalidTenantContextException,
     );
   });

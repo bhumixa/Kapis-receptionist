@@ -38,11 +38,32 @@ export interface RefreshResponse {
 export interface MeResponse {
   user: User;
   tenant: Tenant | null;
+  /**
+   * The caller's *resolved* tenant context (docs/adr/ADR-006) — for a
+   * SUPER_ADMIN currently impersonating a tenant, this is that tenant's id
+   * even though `user`'s own JWT-claim tenant is `null`. For every other
+   * role it always equals `tenant?.id ?? null`.
+   */
+  activeTenantId: string | null;
 }
 
 export interface VerifyEmailResponse {
   user: User;
   message: string;
+}
+
+export interface AcceptInvitationRequest {
+  token: string;
+  firstName: string;
+  lastName: string;
+  password: string;
+}
+
+export interface AcceptInvitationResponse {
+  user: User;
+  tenant: Tenant | null;
+  accessToken: string;
+  expiresIn: number;
 }
 
 export interface MessageResponse {
@@ -78,6 +99,10 @@ export class AuthApiService {
 
   me(): Observable<MeResponse> {
     return this.api.get<MeResponse>('/auth/me');
+  }
+
+  acceptInvitation(request: AcceptInvitationRequest): Observable<AcceptInvitationResponse> {
+    return this.api.post<AcceptInvitationResponse>('/auth/accept-invitation', request);
   }
 
   verifyEmail(token: string): Observable<VerifyEmailResponse> {

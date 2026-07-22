@@ -121,6 +121,11 @@ class EnvironmentVariables {
   @IsInt()
   @IsOptional()
   RBAC_PERMISSION_CACHE_TTL_SECONDS: number = 3600;
+
+  // --- Tenant invitations (Milestone 3, docs/TENANT_ARCHITECTURE.md) ---
+  @IsInt()
+  @IsOptional()
+  TENANT_INVITATION_EXPIRES_IN_SECONDS: number = 60 * 60 * 24 * 7;
 }
 
 /**

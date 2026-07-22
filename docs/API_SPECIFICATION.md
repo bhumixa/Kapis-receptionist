@@ -213,6 +213,7 @@ An `Idempotency-Key` request header (client-generated UUID) is **required** on t
 - **Tenant scoping:** the JWT's `tenantId` claim is the **sole source of tenant context** for every tenant-scoped endpoint. No endpoint accepts a client-supplied `tenantId` in the path, query, or body for determining *which* tenant's data to operate on — doing so would be a direct IDOR/cross-tenant vulnerability (SYSTEM_ARCHITECTURE.md Section 8). Where a request body includes a `tenantId`-shaped field in this document's examples, it refers to a *different* tenant relationship (none exist in this API for MVP, since all resources are single-tenant-owned) — called out explicitly so implementers never add one by habit.
 - **Roles:** `SUPER_ADMIN`, `OWNER`, `MANAGER`, `STAFF` (PRISMA_SCHEMA.md `RoleName`). Each endpoint's "Authorization Required" field names the minimum role(s), satisfied by that role or anything ranked higher (`SUPER_ADMIN` > `OWNER` > `MANAGER` > `STAFF`, docs/adr/ADR-005-rbac.md's role-hierarchy interpretation). ~~`SUPER_ADMIN` is never implicitly included in a tenant-scoped endpoint's allowed roles (a Super Admin uses the separate `/admin/*` surface, Section 16, to act on tenant data, preserving the architectural separation from SYSTEM_ARCHITECTURE.md Section 8.4).`~~ **Amended, Sprint 2.4/docs/adr/ADR-005-rbac.md:** `RolesGuard`/`PermissionGuard` now grant `SUPER_ADMIN` an explicit, logged bypass on every tenant-scoped role/permission check — a deliberate, requester-confirmed deviation from this section's original design, mitigated by a single shared chokepoint (`SuperAdminBypassService`) and mandatory audit logging (`SecurityEventService.record('SUPER_ADMIN_BYPASS', ...)`). The `/admin/*` surface (Section 16) still exists and is unaffected; the bypass only means `SUPER_ADMIN` no longer *needs* it to act on tenant-scoped endpoints. See the ADR for full reasoning.
 - **Internal/system-scoped endpoints:** `POST /ai/tools/book`, `POST /ai/tools/reschedule`, `POST /ai/tools/cancel`, `POST /ai/tools/faq` are authenticated via a **service-level credential** (an internal API key issued to the backend's own AI-orchestration process, rotated independently of any user credential), not a user JWT — see Section 12's introductory note for why these exist as HTTP endpoints at all in a modular monolith.
+- **Tenant switching / impersonation (Milestone 3, docs/adr/ADR-006):** a `SUPER_ADMIN` caller may send `X-Impersonate-Tenant-Id: <uuid>` on any tenant-scoped request to act on that tenant's data — the concrete mechanism the `SUPER_ADMIN` bypass above always implied would be needed once a real tenant-owned resource existed. Resolved exclusively by `TenantContextService` (docs/TENANT_ARCHITECTURE.md Section 3), never read by a controller directly. The header is silently ignored (zero effect) for every non-`SUPER_ADMIN` caller, even if present — ordinary tenant-scoping via the JWT claim (bullet above) is completely unaffected for every other role. An unresolvable target tenant returns `404 TENANT_RESOURCE_NOT_FOUND` (never `403`, same anti-enumeration rule as everywhere else); every successful resolution is recorded as a `SUPER_ADMIN_TENANT_SWITCH` `AuditLog` entry (now a real persisted table — Section 6, docs/TENANT_ARCHITECTURE.md Section 2.3).
 
 ### 2.14.1 RBAC Error Semantics (Sprint 2.4, docs/adr/ADR-005-rbac.md)
 
@@ -519,9 +520,22 @@ Tag: `Auth`. Base path: `/api/v1/auth`.
 **Purpose:** Return the currently authenticated user's identity, roles, and tenant context — used by the frontend on app bootstrap to hydrate `AuthStateService` (SYSTEM_ARCHITECTURE.md 4.2).
 **Auth:** Required (Bearer JWT). **Authorization:** Any authenticated role.
 **Request Body:** None.
-**Success — 200 OK:** `{ "success": true, "data": { "user": UserDTO, "tenant": TenantDTO | null } }` — `tenant` is `null` only for `SUPER_ADMIN`.
+**Success — 200 OK:** `{ "success": true, "data": { "user": UserDTO, "tenant": TenantDTO | null, "activeTenantId": string | null } }` — `tenant` is `null` only for `SUPER_ADMIN`.
 **Errors:** `401 UNAUTHORIZED`.
 **Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (read-only).
+**Amended, Milestone 3/docs/adr/ADR-006:** response gained `activeTenantId` — the caller's *resolved* tenant context (via `TenantContextService`, Section 2.14), which may differ from `tenant?.id` for a `SUPER_ADMIN` currently impersonating a tenant (Section 6.4). For every other role `activeTenantId` always equals `tenant?.id ?? null`.
+
+---
+
+#### `POST /auth/accept-invitation`
+**Added:** Milestone 3 (docs/adr/ADR-006) — closes the staff-onboarding loop `POST /tenant/invitations` (Section 6.4) opens; the gap this document's Section 18.2 originally flagged.
+**Purpose:** Complete a staff invitation using the emailed token — creates the invited `User`+`UserRole` for the inviting tenant and establishes a session identically to `POST /auth/login`.
+**Auth:** Public (the token is the credential). **Authorization:** None.
+**Request Body:** `{ "token": "<raw-token-from-email-link>", "firstName": "Ana", "lastName": "Silva", "password": "Str0ngP@ss!" }`
+**Validation Rules:** `password` same rules as registration; `token` required, must resolve to a `TenantInvitation` row with `acceptedAt = null`, `revokedAt = null`, and `expiresAt > now()`.
+**Success — 200 OK:** `{ "success": true, "data": { "user": UserDTO, "tenant": TenantDTO, "accessToken": "<jwt>", "expiresIn": 900 } }` — same shape as `POST /auth/login`; a `Set-Cookie` response header sets the refresh-token cookie. The invited user's email is treated as pre-verified (the emailed, single-use invitation link is itself proof of ownership) — no separate verification email is sent.
+**Errors:** `400 INVALID_OR_EXPIRED_INVITATION`, `409 EMAIL_ALREADY_EXISTS` (an account with this email already exists), `422 VALIDATION_ERROR`.
+**Rate Limit:** Public-Sensitive. **Idempotency:** Not required (the token is single-use by design — a replay after successful acceptance returns `400 INVALID_OR_EXPIRED_INVITATION`).
 
 ---
 
@@ -575,7 +589,7 @@ Tag: `Users`. Base path: `/api/v1/users`. All endpoints are tenant-scoped to the
 
 ## 6. Tenant Endpoints
 
-Tag: `Tenant`. Base path: `/api/v1/tenant`. Singular, unparameterized paths — always refers to the caller's own tenant (resolved from the JWT), never a path `:id` (Section 2.14).
+Tag: `Tenant`. Base path: `/api/v1/tenant`. Singular, unparameterized paths — always refers to the caller's *resolved* tenant, never a path `:id` (Section 2.14) — resolved via `TenantContextService` (docs/TENANT_ARCHITECTURE.md Section 3), not simply the JWT claim, so a `SUPER_ADMIN` impersonating a tenant (Section 6.4) reaches that tenant's data through these same paths.
 
 #### `GET /tenant`
 **Purpose:** Retrieve the caller's salon profile.
@@ -587,26 +601,63 @@ Tag: `Tenant`. Base path: `/api/v1/tenant`. Singular, unparameterized paths — 
 #### `PATCH /tenant`
 **Purpose:** Update salon profile fields (name, address, timezone, branding).
 **Auth:** Required. **Authorization:** `OWNER`, `MANAGER`.
-**Request Body (all optional):** `{ "name": "...", "addressLine1": "...", "city": "...", "countryCode": "BR", "timezone": "America/Sao_Paulo", "defaultLocale": "pt", "logoFileId": "uuid" }`
-**Validation Rules:** `timezone` valid IANA name; `countryCode` valid ISO 3166-1 alpha-2; `logoFileId` (if present) must reference a `File` row already uploaded via `POST /files` (Section 15 note — the Files upload endpoint itself is out of this document's explicit endpoint list but implied by `TenantDTO.logoUrl`; flagged in Section 17 as a gap to close before implementation) owned by the caller's tenant.
+**Request Body (all optional):** `{ "name": "...", "addressLine1": "...", "city": "...", "countryCode": "BR", "timezone": "America/Sao_Paulo", "defaultLocale": "pt" }`
+**Validation Rules:** `timezone` valid IANA name; `countryCode` valid ISO 3166-1 alpha-2.
 **Success — 200 OK:** `{ "success": true, "data": TenantDTO }`
-**Errors:** `403 FORBIDDEN`, `422 VALIDATION_ERROR`.
+**Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `422 VALIDATION_ERROR`.
 **Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (full-field PATCH semantics).
+**Amended, Milestone 3/docs/adr/ADR-006:** `logoFileId` dropped from this milestone's request body — `Files`/`Media` upload (Milestone 4) doesn't exist yet, so `TenantDTO.logoUrl` stays `null` for every tenant until then, exactly as `TenantResponseDto`'s existing doc comment already noted. `402 TENANT_SUSPENDED` added — this endpoint is now `TenantActiveGuard`-gated.
 
 #### `GET /tenant/settings`
-**Purpose:** Retrieve AI-behavior and policy configuration (SYSTEM_ARCHITECTURE.md `Settings` module, FR-29).
+**Purpose:** Retrieve tenant configuration.
 **Auth:** Required. **Authorization:** `OWNER`, `MANAGER`.
 **Success — 200 OK:** `{ "success": true, "data": TenantSettingsDTO }`
 **Errors:** `403 FORBIDDEN`.
 **Rate Limit:** Standard-Authenticated. **Idempotency:** N/A.
 
 #### `PATCH /tenant/settings`
-**Purpose:** Update AI behavior/policy configuration.
+**Purpose:** Update tenant configuration.
 **Auth:** Required. **Authorization:** `OWNER`, `MANAGER`.
-**Request Body (all optional):** `{ "aiGreetingMessage": "...", "aiTone": "friendly", "aiEscalationInstructions": "...", "cancellationNoticeHours": 24, "bookingBufferMinutes": 10, "reminderHoursBefore": 24, "aiDisclosureEnabled": true, "notificationPreferences": {} }`
-**Validation Rules:** `cancellationNoticeHours`/`bookingBufferMinutes`/`reminderHoursBefore` non-negative integers within sane bounds (e.g., ≤ 168 hours); `aiTone` from a documented small allow-list (`friendly`, `professional`, `casual`) at MVP.
-**Success — 200 OK:** `{ "success": true, "data": TenantSettingsDTO }` — this write also invalidates the Redis-cached `ai:tenant-config:{tenantId}` key (DATABASE_DESIGN.md 10.2) so the AI reflects the change on the very next customer message, not after a TTL expiry.
-**Errors:** `403 FORBIDDEN`, `422 VALIDATION_ERROR`.
+**Request Body (all optional):** `{ "general": {}, "localization": {}, "business": {}, "notifications": {}, "security": {} }` — each key is an arbitrary JSON object, shallow-merged into the stored value for that namespace (existing keys not present in the request body are preserved).
+**Validation Rules:** each provided namespace must be a plain JSON object (not an array or primitive).
+**Success — 200 OK:** `{ "success": true, "data": TenantSettingsDTO }`
+**Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `422 VALIDATION_ERROR`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (shallow-merge PATCH semantics — a retry is safe).
+**Amended, Milestone 3/docs/adr/ADR-006 — `TenantSettingsDTO` restructured:** this document originally specified flat AI/booking-policy fields (`aiGreetingMessage`, `cancellationNoticeHours`, etc.). Per the requester's explicit brief, `TenantSettings` is instead five independent, arbitrary-JSON namespaces (`general`/`localization`/`business`/`notifications`/`security`) so each future milestone (Scheduling, AI, Notifications) populates its own namespace without an API contract change. **No namespace has concrete fields yet** — the flat fields this section originally listed will land inside `business`/`notifications` once Milestones 5/7/9 define them, not as top-level `TenantSettingsDTO` fields. `TenantSettingsDTO` (Section 3) should be read as:
+```
+TenantSettingsDTO {
+  general: object
+  localization: object
+  business: object
+  notifications: object
+  security: object
+  updatedAt: string
+}
+```
+
+#### `POST /tenant/invitations`
+**Added:** Milestone 3 (docs/adr/ADR-006) — deliberately kept under `/tenant/invitations` rather than this document's originally-implied `POST /users` (Section 5's staff-CRUD surface remains unbuilt; see docs/TENANT_ARCHITECTURE.md Section 7).
+**Purpose:** Invite a new staff user to the tenant (creates a `TenantInvitation`, not an active `User` directly — FR-4).
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `staff:invite`.
+**Request Body:** `{ "email": "ana@salon.com", "role": "STAFF" }` — `role` is `MANAGER` or `STAFF` only (`OWNER` cannot be assigned via invite; `SUPER_ADMIN` is never assignable through this endpoint).
+**Validation Rules:** `email` valid; no existing pending invitation for `(tenantId, email)`.
+**Success — 201 Created:** `{ "success": true, "data": { "id": "uuid", "email": "ana@salon.com", "role": "STAFF", "expiresAt": "...", "createdAt": "...", "message": "Invitation sent." } }`
+**Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `409 INVITATION_ALREADY_PENDING`, `422 VALIDATION_ERROR`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (the pending-invitation uniqueness constraint gives natural idempotency — a retry hits `409 INVITATION_ALREADY_PENDING`).
+
+#### `GET /tenant/invitations`
+**Purpose:** List the tenant's pending (not accepted, not revoked) invitations.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`.
+**Success — 200 OK:** `{ "success": true, "data": InvitationDTO[] }` where `InvitationDTO { id, email, role, expiresAt, createdAt }`.
+**Errors:** `403 FORBIDDEN`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** N/A.
+
+#### `DELETE /tenant/invitations/:id`
+**Purpose:** Revoke a pending invitation.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `staff:invite`.
+**Success — 200 OK:** `{ "success": true, "data": {}, "message": "Invitation revoked." }`
+**Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `404 NOT_FOUND` (also returned for an invitation belonging to a different tenant).
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (revoking an already-revoked/accepted invitation is a safe no-op, `200`).
 **Rate Limit:** Standard-Authenticated. **Idempotency:** Not required.
 
 ---
@@ -1060,7 +1111,35 @@ Tag: `Dashboard`. Base paths: `/api/v1/dashboard`, `/api/v1/analytics`, `/api/v1
 
 Tag: `Admin`. Base path: `/api/v1/admin`. **`SUPER_ADMIN` only, on every endpoint in this section, with no exception** — the one part of the API that is not tenant-scoped by JWT claim (SYSTEM_ARCHITECTURE.md 8.4), and therefore the part of the contract the frontend's `admin` feature module (SYSTEM_ARCHITECTURE.md 4.5) exclusively talks to.
 
-#### `GET /admin/users`
+**Amended, Milestone 3/docs/adr/ADR-006 — narrow slice actually built:** only `GET /admin/tenants` and the two lifecycle actions below exist. `GET /admin/users` and `GET /admin/system` remain unbuilt — they depend on the `Users` staff-CRUD surface and platform usage/analytics data that don't exist until later milestones (docs/TENANT_ARCHITECTURE.md Section 7); their original specifications below are retained as forward-looking design, not as-built.
+
+#### `GET /admin/tenants`
+**Purpose:** Cross-tenant tenant listing — the primary Super Admin support/oversight screen (FR-26), and the list the frontend's tenant switcher (Section 2.14's impersonation note) picks a target from.
+**Auth:** Required. **Authorization:** `SUPER_ADMIN`.
+**Query Params (as built):** `status`, `q` (substring match against `name`/`slug`), `page`, `limit` — a simplified subset of Section 2.5's general bracket-notation filter convention, since no other endpoint has implemented that generic convention yet. `filter[planId]`/`subscriptionStatus`/`staffCount` (below) remain design-only, pending Billing/Users.
+**Success — 200 OK (as built):** `{ "success": true, "data": TenantDTO[], "meta": { "pagination": { "strategy": "offset", "page": 1, "limit": 20, "totalItems": ..., "totalPages": ... } } }`. The originally-specified `subscriptionStatus`/`staffCount` response extension fields are not yet included (no `Subscription`/`Users`-CRUD data to source them from).
+**Errors:** `403 FORBIDDEN`.
+**Rate Limit:** Admin. **Idempotency:** N/A.
+
+#### `POST /admin/tenants/:id/suspend`
+**Added:** Milestone 3 (docs/adr/ADR-006).
+**Purpose:** Suspend a tenant (support action) — blocks mutating tenant-scoped requests with `402 TENANT_SUSPENDED` (Section 6) until reactivated.
+**Auth:** Required. **Authorization:** `SUPER_ADMIN`.
+**Request Body:** `{ "reason": "..." }` (optional, ≤500 chars, recorded in the `AuditLog` entry).
+**Success — 201 Created:** `{ "success": true, "data": TenantDTO }` (`status: "SUSPENDED"`) — idempotent: suspending an already-`SUSPENDED` tenant is a safe no-op returning the unchanged tenant.
+**Errors:** `403 FORBIDDEN`, `404 NOT_FOUND`, `409 INVALID_LIFECYCLE_TRANSITION` (attempting to suspend a `CANCELLED` tenant).
+**Rate Limit:** Admin. **Idempotency:** Not required (status-based idempotency, see above).
+
+#### `POST /admin/tenants/:id/reactivate`
+**Added:** Milestone 3 (docs/adr/ADR-006).
+**Purpose:** Reactivate a `SUSPENDED` tenant back to `ACTIVE`.
+**Auth:** Required. **Authorization:** `SUPER_ADMIN`.
+**Request Body:** None.
+**Success — 201 Created:** `{ "success": true, "data": TenantDTO }` (`status: "ACTIVE"`).
+**Errors:** `403 FORBIDDEN`, `404 NOT_FOUND`, `409 INVALID_LIFECYCLE_TRANSITION` (the tenant isn't currently `SUSPENDED`).
+**Rate Limit:** Admin. **Idempotency:** Not required.
+
+#### `GET /admin/users` *(design-only — not yet built, see amendment above)*
 **Purpose:** Cross-tenant user search/listing — support and account-management tooling (SYSTEM_ARCHITECTURE.md `Admin` module).
 **Auth:** Required. **Authorization:** `SUPER_ADMIN`.
 **Query Params:** `filter[tenantId]`, `filter[email]`, `filter[isActive]`; sortable: `createdAt`, `lastLoginAt` (default `-createdAt`); pagination: offset; `q` searches `email`/`firstName`/`lastName` platform-wide.
@@ -1068,15 +1147,7 @@ Tag: `Admin`. Base path: `/api/v1/admin`. **`SUPER_ADMIN` only, on every endpoin
 **Errors:** `403 FORBIDDEN` (non-Super-Admin caller).
 **Rate Limit:** Admin. **Idempotency:** N/A.
 
-#### `GET /admin/tenants`
-**Purpose:** Cross-tenant tenant listing — the primary Super Admin support/oversight screen (FR-26).
-**Auth:** Required. **Authorization:** `SUPER_ADMIN`.
-**Query Params:** `filter[status][in]`, `filter[planId]`; sortable: `createdAt`, `name` (default `-createdAt`); pagination: offset; `q` searches `name`/`slug`.
-**Success — 200 OK:** `{ "success": true, "data": (TenantDTO & { subscriptionStatus: SubscriptionStatus, staffCount: integer })[], "meta": { "pagination": {...} } }`
-**Errors:** `403 FORBIDDEN`.
-**Rate Limit:** Admin. **Idempotency:** N/A.
-
-#### `GET /admin/system`
+#### `GET /admin/system` *(design-only — not yet built, see amendment above)*
 **Purpose:** Platform-wide health/usage snapshot — AI/WhatsApp usage volume, error rates, background-job queue depth (FR-27, SYSTEM_ARCHITECTURE.md 10.8).
 **Auth:** Required. **Authorization:** `SUPER_ADMIN`.
 **Query Params:** None (a live snapshot, not a filtered list).
@@ -1107,7 +1178,7 @@ The `Idempotency-Key` header (Section 2.13) is modeled as a `components.paramete
 
 ### 18.1 Endpoint Coverage Summary
 
-65 endpoints across 13 domains, exactly matching the requested list: Authentication (9), Users (5), Tenant (4), Employees (5), Services (5), Customers (5), Appointments (8), WhatsApp (6), AI (5), Billing (5), Notifications (2), Dashboard (3), Admin (3).
+65 endpoints across 13 domains, exactly matching the requested list: Authentication (9), Users (5), Tenant (4), Employees (5), Services (5), Customers (5), Appointments (8), WhatsApp (6), AI (5), Billing (5), Notifications (2), Dashboard (3), Admin (3). **As-built after Milestone 3 (docs/adr/ADR-006):** Authentication gained `POST /auth/accept-invitation` (10); Tenant gained `POST/GET/DELETE /tenant/invitations*` (7); Admin's original 3 became `GET /admin/tenants` + 2 lifecycle actions built, `GET /admin/users`/`GET /admin/system` still design-only (Section 16). Users' original 5 (staff CRUD) remain entirely unbuilt.
 
 ### 18.2 Gaps Identified During This Design (Flagged, Not Silently Filled)
 

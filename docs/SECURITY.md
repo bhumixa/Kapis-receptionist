@@ -47,9 +47,11 @@ If this platform's threat model changes such that this tradeoff is no longer acc
 ## 3. Multi-Tenancy Isolation Posture
 
 - Shared database, shared schema, `tenant_id`-scoped rows (SYSTEM_ARCHITECTURE.md §8.1) — the chosen strategy, not schema-per-tenant.
-- **Current state:** `TenantScopedGuard` provides only the baseline "the caller has a resolvable tenant context" check. It does **not** yet verify that a specific tenant-owned resource, looked up by `:id`, actually belongs to the caller's tenant — no tenant-owned business resource (Employee, Customer, etc.) exists yet to build that check against.
-- **Still open:** the composite-foreign-key cross-tenant-safe relation pattern (PRISMA_SCHEMA.md §14.4, DATABASE_DESIGN.md Risk DB-R1) and the standing, CI-enforced tenant-isolation regression suite (IMPLEMENTATION_ROADMAP.md's Sprint 3.1 acceptance criteria) are **not** built yet — they remain the single highest-leverage correctness work left on this platform's roadmap and should land before any tenant-owned business module ships real data.
-- When the per-resource-ID check above is eventually built, a cross-tenant access attempt must return `404 NOT_FOUND`, never `403`, per API_SPECIFICATION.md §2.3.1's anti-enumeration rule — this applies uniformly to `SUPER_ADMIN` too, unlike the role/permission bypass above.
+- **As of Milestone 3 (docs/adr/ADR-006):** `TenantScopedGuard` now delegates entirely to `TenantContextService` (docs/TENANT_ARCHITECTURE.md §3), the sole authoritative resolver of tenant context platform-wide. This is a **behavior change** from the baseline described below: a `SUPER_ADMIN` with no impersonation header now *fails* this guard (`403 INVALID_TENANT_CONTEXT`) rather than passing unconditionally with `tenantId: null` — there is no "my tenant" for a Super Admin acting on a genuinely tenant-scoped resource without explicitly declaring which one.
+- `TenantScopedRepository` (`core/database/`) is the first real per-resource-ID ownership check this platform has: `findByIdOrThrow` returns `404 TENANT_RESOURCE_NOT_FOUND` (never `403`) for a lookup matching an `id` belonging to a different tenant, identically to a lookup matching no row at all — exactly the anti-enumeration behavior the "still open" note below used to flag as unbuilt. `PrismaTenantInvitationRepository` is its first consumer; every Milestone-4-onward tenant-owned repository extends it.
+- **Still open:** the composite-foreign-key cross-tenant-safe relation pattern (PRISMA_SCHEMA.md §14.4, DATABASE_DESIGN.md Risk DB-R1) is documented as the mandatory Milestone-4-onward convention (docs/TENANT_ARCHITECTURE.md §4.1) but not yet exercised — no tenant-owned model pair in this milestone's scope (`TenantSettings`/`TenantInvitation`, both referencing only `Tenant`) needs it. It becomes load-bearing starting with Milestone 4's `Employee`↔`Service` relation.
+- **Tenant switching (impersonation):** a `SUPER_ADMIN` may act on a specific tenant via `X-Impersonate-Tenant-Id`, resolved exclusively by `TenantContextService` and ignored entirely (spoofing-protected) for every other role — full design, alternatives considered, and mitigations in docs/adr/ADR-006. Every resolution is audit-logged (`SUPER_ADMIN_TENANT_SWITCH`).
+- A cross-tenant access attempt returns `404 NOT_FOUND`, never `403`, per API_SPECIFICATION.md §2.3.1's anti-enumeration rule — this applies uniformly to `SUPER_ADMIN` too, unlike the role/permission bypass above.
 
 ---
 
@@ -59,7 +61,7 @@ Mirrors AUTHENTICATION.md §8's "Explicitly Out of Scope" list, security-relevan
 
 - Google OAuth, MFA/WebAuthn — not implemented.
 - CSRF double-submit token on `/auth/refresh` — deferred; `SameSite=Strict`/`HttpOnly` is the primary control today.
-- `TenantScopedGuard`'s per-resource-ID ownership check — baseline only, see §3.
-- The composite-FK cross-tenant pattern and standing isolation regression suite — not built, see §3.
+- The composite-FK cross-tenant pattern — documented (§3), not yet exercised; no consumer until Milestone 4.
+- `Users`/`UserRole` staff-CRUD (list/patch-role/deactivate/last-owner-protection) — still unbuilt; only invite-create/list/revoke/accept exist (Milestone 3, docs/TENANT_ARCHITECTURE.md).
 - Role-change → session/JWT invalidation — a user's already-issued access token still carries their old `roles` claim after a role change; moot today (no role-assignment endpoint exists yet), but should call `SessionService.revokeAllForUser()` once one is built.
-- `AuditLog` as a persisted table — every security/authorization event is a structured log line today (`SecurityEventService`), explicit Milestone 9 scope to persist.
+- `AuditLog` as a persisted table — **now built** (Milestone 3, docs/adr/ADR-006, pulled forward from its originally-planned Milestone 9 slot), but scoped to the events that milestone's own modules write (tenant lifecycle/settings/invitations, Super Admin tenant-switch). `SecurityEventService`'s auth/RBAC structured log lines (register, login, `SUPER_ADMIN_BYPASS`, etc.) are **not yet** replayed into it — that backfill remains Milestone 9 scope, per `SecurityEventService`'s own doc comment.

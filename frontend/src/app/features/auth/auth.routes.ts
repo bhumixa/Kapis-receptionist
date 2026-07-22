@@ -33,4 +33,12 @@ export const authRoutes: Routes = [
     loadComponent: () =>
       import('./pages/verify-email-page/verify-email-page').then((m) => m.VerifyEmailPage),
   },
+  {
+    path: 'accept-invitation/:token',
+    canActivate: [guestOnlyGuard],
+    loadComponent: () =>
+      import('./pages/accept-invitation-page/accept-invitation-page').then(
+        (m) => m.AcceptInvitationPage,
+      ),
+  },
 ];

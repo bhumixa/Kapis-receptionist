@@ -83,6 +83,7 @@ model User {
   passwordResets     PasswordReset[]
   emailVerifications EmailVerification[]
   invitationsSent    TenantInvitation[]  @relation("InvitedBy")
+  auditLogs          AuditLog[]
 
   @@index([tenantId], name: "idx_users_tenant_id")
   @@map("users")
@@ -227,9 +228,37 @@ model Tenant {
 
   users       User[]
   invitations TenantInvitation[]
+  settings    TenantSettings?
+  auditLogs   AuditLog[]
 
   @@index([status], name: "idx_tenants_status")
   @@map("tenants")
+}
+
+// TenantSettings (Milestone 3, docs/TENANT_ARCHITECTURE.md): namespaced into
+// five independently-extensible JSON blocks rather than flat columns, per
+// the requester's explicit brief. Each namespace defaults to `{}` and is
+// owned by whichever future milestone populates it (business/notifications
+// wait on Scheduling/AI/Notifications; general/localization/security have no
+// concrete fields yet) — adding a field to a namespace is an application-layer
+// change, never a schema migration. This milestone only builds the
+// container; no namespace is populated with real data yet.
+model TenantSettings {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId String @unique @db.Uuid
+
+  general       Json @default("{}")
+  localization  Json @default("{}")
+  business      Json @default("{}")
+  notifications Json @default("{}")
+  security      Json @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_settings")
 }
 
 model TenantInvitation {
@@ -252,6 +281,42 @@ model TenantInvitation {
   @@index([tenantId], name: "idx_tenant_invitations_tenant_id")
   @@index([email], name: "idx_tenant_invitations_email")
   @@map("tenant_invitations")
+}
+
+// --- System / Audit Models (Milestone 3 pull-forward from Milestone 9;
+// docs/TENANT_ARCHITECTURE.md, docs/adr/ADR-006) ----------------------------
+// AuditLog is deliberately platform-wide and reusable, not a tenant-specific
+// table: `tenantId`/`entityId`/`actorId` are all nullable so the same table
+// can record tenant-scoped business events (settings changed, invitation
+// created) *and* platform-level events with no single owning tenant (a
+// Super Admin listing tenants, a future cross-tenant action). Only the
+// events this milestone actually writes (tenant lifecycle, settings,
+// invitations, admin tenant-switch) exist yet — every other module adds its
+// own `action`/`entityType` values as it's built, never a schema change.
+// `id` uses standard `gen_random_uuid()` rather than PRISMA_SCHEMA.md's
+// recommended app-generated UUIDv7 for this table — that optimization
+// targets 10M+-row index locality (Milestone 9 territory) and isn't worth a
+// new dependency at this milestone's volume; noted as a deferred follow-up,
+// not an oversight.
+model AuditLog {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String?   @db.Uuid
+  action     String    @db.VarChar(100)
+  entityType String    @db.VarChar(100)
+  entityId   String?   @db.Uuid
+  actorType  ActorType
+  actorId    String?   @db.Uuid
+  metadata   Json?
+  ipAddress  String?   @db.VarChar(45)
+  createdAt  DateTime  @default(now())
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  actor  User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt], name: "idx_audit_logs_tenant_created")
+  @@index([entityType, entityId], name: "idx_audit_logs_entity")
+  @@index([action], name: "idx_audit_logs_action")
+  @@map("audit_logs")
 }
 
 // --- Billing Models (docs/PRISMA_SCHEMA.md Section 10) ---------------------

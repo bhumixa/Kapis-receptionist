@@ -1,40 +1,37 @@
-import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
-import { RoleName } from '@prisma/client';
-import { AuthenticatedRequest } from '../../modules/auth/interface/types/authenticated-request.interface';
-import { InvalidTenantContextException } from './rbac.exceptions';
+import { CanActivate, Injectable } from '@nestjs/common';
+import { TenantContextService } from '../context/tenant-context.service';
 
 /**
- * Baseline "resolvable tenant context" check (docs/adr/ADR-005-rbac.md).
- * `SUPER_ADMIN` passes unconditionally (it has no fixed tenant by design —
- * `AccessTokenPayload.tenantId` is `null`); every other role must carry a
- * `tenantId` to pass at all.
+ * Baseline "resolvable tenant context" check (docs/adr/ADR-005-rbac.md,
+ * evolved in docs/adr/ADR-006 to delegate resolution to
+ * `TenantContextService` now that it has real consumers). Simply requires
+ * `TenantContextService.requireTenantId()` to succeed — which itself
+ * encodes every resolution rule (JWT claim vs. impersonation header,
+ * Super-Admin-without-impersonation-context rejection, spoofing
+ * protection) in one authoritative place, per ADR-006's "resolve tenant
+ * context exclusively through TenantMiddleware and TenantContextService"
+ * requirement.
  *
- * Deliberately narrow MVP scope: this does **not** yet check that a
- * specific tenant-owned resource (looked up by `:id`) actually belongs to
- * the caller's tenant — no tenant-owned business resource (Employee,
- * Customer, etc.) exists yet to check against. That per-resource-ID
- * ownership check (return `404 NOT_FOUND`, never `403`, on a cross-tenant
- * mismatch, per API_SPECIFICATION.md Section 2.3.1's anti-enumeration
- * rule — applied uniformly to `SUPER_ADMIN` too, unlike the role/permission
- * bypass in `RolesGuard`/`PermissionGuard`) is an intentionally unbuilt
- * extension point for whichever future module first needs it. See
- * `rbac.exceptions.ts`'s `TenantResourceNotFoundException`, reserved for
- * that use.
+ * Note this is a behavior change from the original Sprint 2.4 version: a
+ * `SUPER_ADMIN` with no `X-Impersonate-Tenant-Id` header now fails this
+ * guard (there is no "my tenant" for a Super Admin acting on a genuinely
+ * tenant-scoped resource) rather than passing unconditionally with a
+ * `null` tenant. This is the concrete mechanism the original design's
+ * "Super Admin has no fixed tenant" placeholder was always going to need
+ * once a real tenant-owned resource existed to check against.
+ *
+ * Still does **not** perform per-resource-ID ownership checks (e.g.
+ * "does *this* `:id` belong to the resolved tenant") — that remains an
+ * open extension point for whichever module's repository layer needs it
+ * (the `TenantScopedRepository` base class, Milestone 3, is where that
+ * lives going forward).
  */
 @Injectable()
 export class TenantScopedGuard implements CanActivate {
-  canActivate(context: ExecutionContext): boolean {
-    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
-    const { roles, tenantId } = request.user;
+  constructor(private readonly tenantContext: TenantContextService) {}
 
-    if (roles.includes(RoleName.SUPER_ADMIN)) {
-      return true;
-    }
-
-    if (!tenantId) {
-      throw new InvalidTenantContextException();
-    }
-
+  async canActivate(): Promise<boolean> {
+    await this.tenantContext.requireTenantId();
     return true;
   }
 }

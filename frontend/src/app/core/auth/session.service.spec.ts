@@ -60,7 +60,7 @@ describe('SessionService', () => {
   describe('bootstrap()', () => {
     it('hydrates AuthStateService from a valid refresh cookie', (done) => {
       authApi.refresh.and.returnValue(of({ accessToken: 'jwt', expiresIn: 900 }));
-      authApi.me.and.returnValue(of({ user, tenant }));
+      authApi.me.and.returnValue(of({ user, tenant, activeTenantId: tenant.id }));
 
       service.bootstrap().subscribe((result) => {
         expect(result).toBe(true);

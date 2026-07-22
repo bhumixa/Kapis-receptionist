@@ -94,3 +94,11 @@ export const rbacConfig = registerAs('rbac', () => ({
     10,
   ),
 }));
+
+/** Tenant invitations (Milestone 3, docs/TENANT_ARCHITECTURE.md). */
+export const tenantsConfig = registerAs('tenants', () => ({
+  invitationExpiresInSeconds: parseInt(
+    process.env.TENANT_INVITATION_EXPIRES_IN_SECONDS ?? `${60 * 60 * 24 * 7}`,
+    10,
+  ),
+}));

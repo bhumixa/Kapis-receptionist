@@ -45,11 +45,16 @@ export function getPrisma(app: INestApplication): PrismaService {
   return app.get(PrismaService);
 }
 
-/** Deletes every row this test run created, in FK-safe order (Users before their Tenant — `onDelete: Restrict`). */
+/**
+ * Deletes every row this test run created, in FK-safe order. `TenantInvitation`
+ * before `User` (`invitedByUserId` is `onDelete: Restrict`, Milestone 3) —
+ * Users before their Tenant, same reason.
+ */
 export async function cleanupTenant(
   prisma: PrismaService,
   tenantId: string,
 ): Promise<void> {
+  await prisma.tenantInvitation.deleteMany({ where: { tenantId } });
   await prisma.user.deleteMany({ where: { tenantId } });
   await prisma.tenant.delete({ where: { id: tenantId } }).catch(() => {
     // Already gone (e.g. a test that never got past a failed assertion) — fine.

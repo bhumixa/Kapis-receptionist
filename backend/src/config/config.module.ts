@@ -9,6 +9,7 @@ import {
   mailConfig,
   rbacConfig,
   redisConfig,
+  tenantsConfig,
 } from './configuration';
 import { validateEnv } from './env.validation';
 
@@ -26,6 +27,7 @@ import { validateEnv } from './env.validation';
         loginSecurityConfig,
         accountSecurityConfig,
         rbacConfig,
+        tenantsConfig,
       ],
       validate: validateEnv,
     }),

@@ -10,6 +10,7 @@ import { provideRouter } from '@angular/router';
 
 import { authInterceptor } from './core/interceptors/auth.interceptor';
 import { requestIdInterceptor } from './core/interceptors/request-id.interceptor';
+import { tenantImpersonationInterceptor } from './core/interceptors/tenant-impersonation.interceptor';
 // IdempotencyKeyInterceptor (Milestone 5) and LoadingInterceptor (once
 // UiStateService exists) join this array in the documented order
 // (docs/FRONTEND_ARCHITECTURE.md Section 10.6) as each milestone needs them.
@@ -21,7 +22,9 @@ export const appConfig: ApplicationConfig = {
     provideBrowserGlobalErrorListeners(),
     provideZoneChangeDetection({ eventCoalescing: true }),
     provideRouter(routes),
-    provideHttpClient(withInterceptors([requestIdInterceptor, authInterceptor])),
+    provideHttpClient(
+      withInterceptors([requestIdInterceptor, tenantImpersonationInterceptor, authInterceptor]),
+    ),
     // Silent refresh before any protected route renders
     // (docs/FRONTEND_ARCHITECTURE.md Section 5.6) — a still-valid refresh
     // cookie re-establishes the session with no login flash; a

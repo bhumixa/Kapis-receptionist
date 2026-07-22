@@ -2,6 +2,31 @@
 
 All notable changes to this project are documented in this file. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [Semantic Versioning](https://semver.org/) as defined in IMPLEMENTATION_ROADMAP.md Section 2.8 (platform release version, distinct from the API's own `/api/v1` URI versioning).
 
+## [Unreleased] — Milestone 3: Multi-Tenant SaaS Engine
+
+Full technical reference: [docs/TENANT_ARCHITECTURE.md](docs/TENANT_ARCHITECTURE.md), decision record: [docs/adr/ADR-006-multi-tenant-saas-engine.md](docs/adr/ADR-006-multi-tenant-saas-engine.md). Scope: tenant infrastructure only — salon management, scheduling, WhatsApp, AI, and billing are explicitly out of scope.
+
+### Added
+- **Backend** (`Tenants` module, new): `GET/PATCH /tenant` (profile), `GET/PATCH /tenant/settings` (five namespaced JSON blocks — `general`/`localization`/`business`/`notifications`/`security` — structured for future expansion, no concrete fields yet), `POST/GET/DELETE /tenant/invitations*` (create/list/revoke staff invitations, deliberately kept under `/tenant/invitations` rather than `/users`).
+- **Backend** (`Admin` module, new): `GET /admin/tenants`, `POST /admin/tenants/:id/{suspend,reactivate}` — a deliberately narrow slice of the eventual full console.
+- **Backend** (`Auth` module): `POST /auth/accept-invitation` (closes the staff-onboarding loop); `POST /auth/register` now atomically creates `TenantSettings` alongside `Tenant`+`Owner`; `GET /auth/me` gained `activeTenantId` (the *resolved* tenant context, distinct from the JWT's own claim for an impersonating Super Admin).
+- **Backend** (`Core` module): `TenantMiddleware` (global, decision-free header extraction) + a reworked `TenantContextService` — now the platform's sole authoritative tenant-context resolver, handling JWT-claim resolution, Super Admin impersonation, tenant-existence validation, and audit logging in one place; `TenantActiveGuard` (`402 TENANT_SUSPENDED` skeleton); `TenantScopedRepository` base class (the tenant-scoped repository pattern every future domain module extends); `AuditLogService`/`AuditLogModule` — a real, persisted, **platform-wide** audit trail pulled forward from Milestone 9.
+- **Security:** Platform Admin tenant switching via `X-Impersonate-Tenant-Id`, honored only for `SUPER_ADMIN` and spoofing-protected (zero effect) for every other role; every resolution recorded as a `SUPER_ADMIN_TENANT_SWITCH` audit event. `TenantScopedGuard` now delegates entirely to `TenantContextService` — a `SUPER_ADMIN` with no impersonation header now fails it, a deliberate behavior change from the prior sprint.
+- **Frontend:** `TenantApiService`, `AdminApiService`; `tenantImpersonationInterceptor`; `tenantActiveGuard`; `SettingsPage` (`/app/settings` — profile, namespaced settings, team invitations); `AdminTenantsPage` + `AdminLayout` (`/admin/tenants` — tenant list, act-as/suspend/reactivate); `AcceptInvitationPage` (`/auth/accept-invitation/:token`); `TenantSuspendedPage` (`/app/tenant-suspended`, `tenantActiveGuard`'s interim redirect target pending Milestone 8's `/app/billing`); `DashboardLayout` gained tenant-aware nav and an "Acting as X" impersonation banner.
+- **Testing:** backend unit tests (`TenantContextService` impersonation/spoofing/memoization, `TenantLifecycleService` transition rules, reworked `TenantScopedGuard`); backend integration tests (`test/integration/tenants/`, `test/integration/admin/`) covering cross-tenant isolation, impersonation, spoofing protection, and the full invitation-create-to-accept flow — a permanent, standing regression suite; frontend unit test fixtures updated for the new `activeTenantId` field; a full manual browser walkthrough (Playwright) of registration → settings → invitation → impersonation → suspend/reactivate.
+
+### Changed
+- `TenantScopedGuard`'s behavior: a `SUPER_ADMIN` with no impersonation header now fails with `403 INVALID_TENANT_CONTEXT` rather than passing unconditionally.
+- `ResponseTransformInterceptor` gained a `paginated()` escape hatch so list endpoints (starting with `GET /admin/tenants`) can return real `meta.pagination` instead of it being silently discarded.
+- `@CurrentTenant()` decorator removed (superseded — see docs/adr/ADR-006).
+
+### Known Limitations
+- `TenantFeature`, `Subscription`-linked tenant lifecycle, and `TenantStatus.CANCELLED` are not built (no requested consumer; tied to Billing, Milestone 8).
+- `Users`/`UserRole` staff-CRUD (list-all/patch-role/deactivate/last-owner-protection) remains unbuilt — only invitation create/list/revoke/accept exist.
+- `GET /admin/users`, `GET /admin/system` remain design-only (Milestone 9 scope).
+- The composite-FK cross-tenant relation pattern is documented as the mandatory Milestone-4-onward convention but not yet exercised — no cross-tenant-owned-entity relation exists in this milestone's scope.
+- `AuditLog.id` uses standard `gen_random_uuid()`, not the app-generated UUIDv7 PRISMA_SCHEMA.md recommends for this table at scale — deferred until real volume justifies the dependency.
+
 ## [Unreleased] — Milestone 3: Authorization (Sprint 2.4 — RBAC)
 
 Full technical reference: [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) Section 6b, [docs/SECURITY.md](docs/SECURITY.md), decision record: [docs/adr/ADR-005-rbac.md](docs/adr/ADR-005-rbac.md). IMPLEMENTATION_ROADMAP.md calls this slot "Sprint 3.1"; this release implements a narrower, RBAC-only charter — see the ADR.

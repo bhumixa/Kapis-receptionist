@@ -1,6 +1,7 @@
 import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NotificationsService } from '../../notifications/application/notifications.service';
+import { TenantInvitationService } from '../../tenants/application/tenant-invitation.service';
 import { AuthTenant } from '../domain/entities/auth-tenant.entity';
 import { AuthUser } from '../domain/entities/auth-user.entity';
 import {
@@ -90,6 +91,7 @@ export class AuthService {
     private readonly loginAttempts: LoginAttemptService,
     private readonly notifications: NotificationsService,
     private readonly configService: ConfigService,
+    private readonly invitations: TenantInvitationService,
   ) {}
 
   async register(
@@ -227,19 +229,97 @@ export class AuthService {
     await this.sessions.revoke(rawRefreshToken);
   }
 
+  /**
+   * `effectiveTenantId` (Milestone 3, docs/adr/ADR-006): the caller's
+   * *resolved* tenant context (via `TenantContextService`, honoring Super
+   * Admin impersonation), not necessarily the same as `user.tenantId` from
+   * the JWT — so the frontend always knows which tenant is actually in
+   * effect, distinct from the JWT's own home-tenant claim. Resolved by the
+   * controller (which owns `TenantContextService`, a request-scoped
+   * provider) and passed in here, keeping this service a plain singleton.
+   */
   async me(
     userId: string,
-  ): Promise<{ user: AuthUser; tenant: AuthTenant | null }> {
+    effectiveTenantId: string | null,
+  ): Promise<{
+    user: AuthUser;
+    tenant: AuthTenant | null;
+    activeTenantId: string | null;
+  }> {
     const user = await this.users.findById(userId);
     if (!user) {
       throw new UnauthorizedException();
     }
 
-    const tenant = user.tenantId
-      ? await this.tenants.findById(user.tenantId)
+    const tenant = effectiveTenantId
+      ? await this.tenants.findById(effectiveTenantId)
       : null;
 
-    return { user, tenant };
+    return { user, tenant, activeTenantId: effectiveTenantId };
+  }
+
+  /**
+   * `POST /auth/accept-invitation` (Milestone 3, docs/adr/ADR-006) — closes
+   * the staff-onboarding loop `TenantInvitationService.createInvitation`
+   * opens. Validates the token, creates the invited `User`+`UserRole` for
+   * the invitation's tenant, marks the invitation accepted, and establishes
+   * a session identically to `login` — the invitee lands signed in, not
+   * redirected to a separate login step.
+   */
+  async acceptInvitation(
+    input: {
+      token: string;
+      firstName: string;
+      lastName: string;
+      password: string;
+    },
+    meta: RequestMeta,
+  ): Promise<AuthenticatedSession> {
+    const consumed = await this.invitations.validateAndConsume(input.token);
+
+    const existing = await this.users.findByEmail(
+      normalizeEmail(consumed.email),
+    );
+    if (existing) {
+      throw new EmailAlreadyExistsException();
+    }
+
+    const passwordHash = await this.passwords.hash(input.password);
+
+    const user = await this.registration.registerInvitedUser({
+      tenantId: consumed.tenantId,
+      email: consumed.email,
+      passwordHash,
+      firstName: input.firstName.trim(),
+      lastName: input.lastName.trim(),
+      roleId: consumed.roleId,
+    });
+
+    await this.invitations.markAccepted(
+      consumed.invitationId,
+      consumed.tenantId,
+      user.id,
+    );
+
+    this.securityEvents.record('REGISTER', {
+      userId: user.id,
+      tenantId: consumed.tenantId,
+      email: user.email,
+    });
+
+    const tenant = await this.tenants.findById(consumed.tenantId);
+    const { accessToken, expiresIn } = this.tokens.signAccessToken(
+      toAccessTokenPayload(user),
+    );
+    const session = await this.sessions.issueSession(user.id, meta);
+
+    return {
+      user,
+      tenant,
+      accessToken,
+      expiresIn,
+      rawRefreshToken: session.rawRefreshToken,
+    };
   }
 
   /**

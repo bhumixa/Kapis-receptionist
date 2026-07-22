@@ -1,6 +1,8 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { CoreModule } from '../../core/core.module';
+import { TenantsModule } from '../tenants/tenants.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EMAIL_VERIFICATION_REPOSITORY } from './domain/ports/email-verification-repository.port';
 import { PASSWORD_RESET_REPOSITORY } from './domain/ports/password-reset-repository.port';
@@ -41,6 +43,14 @@ import {
       { name: THROTTLE_STANDARD_AUTHENTICATED, ttl: 60_000, limit: 120 },
     ]),
     NotificationsModule,
+    // Milestone 3 (docs/adr/ADR-006): `/auth/me` and `/auth/accept-invitation`
+    // need `TenantContextService` (Core) and `TenantInvitationService`
+    // (Tenants) respectively. Both target modules also import `AuthModule`
+    // (for `JwtAuthGuard`/`TokenService`/`SecurityEventService`), so both
+    // imports here are genuine, intentional circular module dependencies —
+    // `forwardRef` on both sides is the standard Nest resolution.
+    forwardRef(() => CoreModule),
+    forwardRef(() => TenantsModule),
   ],
   controllers: [AuthController],
   providers: [

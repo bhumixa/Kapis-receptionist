@@ -1,0 +1,79 @@
+<div class="max-w-4xl">
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-semibold text-white">Tenants</h1>
+      <p class="text-sm text-slate-400 mt-1">Every salon on the platform.</p>
+    </div>
+    @if (impersonatedTenant(); as tenant) {
+      <div class="rounded-md bg-amber-500/10 border border-amber-500/30 px-4 py-2 text-sm text-amber-400">
+        Acting as <strong>{{ tenant.name }}</strong>
+        <button type="button" (click)="returnToMyAccount()" class="ml-2 underline">Stop</button>
+      </div>
+    }
+  </div>
+
+  @if (isLoading()) {
+    <p class="text-sm text-slate-400">Loading...</p>
+  } @else if (tenants().length === 0) {
+    <p class="text-sm text-slate-400">No tenants yet.</p>
+  } @else {
+    <table class="w-full text-sm text-slate-200">
+      <thead>
+        <tr class="text-left text-slate-400 border-b border-slate-800">
+          <th class="py-2 font-medium">Name</th>
+          <th class="py-2 font-medium">Status</th>
+          <th class="py-2 font-medium">Timezone</th>
+          <th class="py-2"></th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (tenant of tenants(); track tenant.id) {
+          <tr class="border-b border-slate-800/60">
+            <td class="py-3">{{ tenant.name }}</td>
+            <td class="py-3">
+              <span
+                class="rounded-full px-2 py-0.5 text-xs font-medium"
+                [class]="
+                  tenant.status === 'ACTIVE'
+                    ? 'bg-green-900 text-green-400'
+                    : 'bg-slate-700 text-slate-300'
+                "
+              >
+                {{ tenant.status }}
+              </span>
+            </td>
+            <td class="py-3">{{ tenant.timezone }}</td>
+            <td class="py-3 text-right space-x-3">
+              <button
+                type="button"
+                (click)="actAs(tenant)"
+                class="font-medium text-slate-300 hover:text-white"
+              >
+                Act as
+              </button>
+              @if (tenant.status === 'SUSPENDED') {
+                <button
+                  type="button"
+                  (click)="reactivate(tenant)"
+                  [disabled]="actioningTenantId() === tenant.id"
+                  class="font-medium text-green-400 hover:underline disabled:opacity-50"
+                >
+                  Reactivate
+                </button>
+              } @else {
+                <button
+                  type="button"
+                  (click)="suspend(tenant)"
+                  [disabled]="actioningTenantId() === tenant.id"
+                  class="font-medium text-red-400 hover:underline disabled:opacity-50"
+                >
+                  Suspend
+                </button>
+              }
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+</div>

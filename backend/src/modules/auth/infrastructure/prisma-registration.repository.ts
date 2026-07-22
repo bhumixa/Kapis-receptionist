@@ -2,24 +2,32 @@ import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { Prisma, RoleName } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { slugify, withRandomSuffix } from '../../../common/utils/slugify.util';
+import { AuthUser } from '../domain/entities/auth-user.entity';
 import {
+  RegisterInvitedUserInput,
   RegisterTenantOwnerInput,
   RegisterTenantOwnerResult,
   RegistrationRepositoryPort,
 } from '../domain/ports/registration-repository.port';
-import { toAuthTenant, toAuthUser } from './mappers/prisma-auth.mappers';
+import {
+  toAuthTenant,
+  toAuthUser,
+  userWithRolesInclude,
+} from './mappers/prisma-auth.mappers';
 
 const MAX_SLUG_ATTEMPTS = 5;
 
 /**
  * Implements the one atomic, multi-table write this module owns: Tenant +
- * User + UserRole(OWNER) in a single Postgres transaction
+ * User + UserRole(OWNER) + TenantSettings in a single Postgres transaction
  * (SYSTEM_ARCHITECTURE.md Section 2.2's "Modular Monolith gives ACID
- * transactions" rationale, applied here). Deliberately does **not** create
- * `TenantSettings`/`Subscription` — those tables don't exist until
- * Milestone 3/8 (docs/AUTH_SCHEMA_REVIEW.md Section 3, ADR-002), and does
- * **not** send a verification email (Notifications/email-verification are
- * out of this sprint's scope, docs/adr/ADR-003-core-authentication.md).
+ * transactions" rationale, applied here). As of Milestone 3
+ * (docs/adr/ADR-006), `TenantSettings` is created here with its default,
+ * empty namespace values — but deliberately **not** `Subscription`, since
+ * that table still doesn't exist (Milestone 8/Billing, explicitly out of
+ * this milestone's scope; `Tenant.status`/`trialEndsAt` continue to work
+ * exactly as before). Does **not** send a verification email — that's
+ * orchestrated by `AuthService.register` after this transaction commits.
  */
 @Injectable()
 export class PrismaRegistrationRepository implements RegistrationRepositoryPort {
@@ -86,10 +94,36 @@ export class PrismaRegistrationRepository implements RegistrationRepositoryPort 
         include: { roles: { include: { role: true } } },
       });
 
+      await tx.tenantSettings.create({ data: { tenantId: tenant.id } });
+
       return { user, tenant };
     });
 
     return { user: toAuthUser(user), tenant: toAuthTenant(tenant) };
+  }
+
+  async registerInvitedUser(
+    input: RegisterInvitedUserInput,
+  ): Promise<AuthUser> {
+    const user = await this.prisma.user.create({
+      data: {
+        tenantId: input.tenantId,
+        email: input.email,
+        passwordHash: input.passwordHash,
+        firstName: input.firstName,
+        lastName: input.lastName,
+        // The invitation link itself is the verification mechanism — the
+        // invitee clicked an emailed, tenant-scoped, single-use link, which
+        // is at least as strong a proof of email ownership as this
+        // platform's standard verify-email flow. No redundant second
+        // verification email is sent.
+        isEmailVerified: true,
+        roles: { create: { roleId: input.roleId } },
+      },
+      include: userWithRolesInclude,
+    });
+
+    return toAuthUser(user);
   }
 }
 

@@ -1,6 +1,12 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  NotFoundException,
+} from '@nestjs/common';
 import { RoleName } from '@prisma/client';
 import { RBAC_ERROR_CODES } from '../../common/constants/rbac.constants';
+import { ERROR_CODES } from '../../common/constants/error-codes.constant';
 
 /**
  * Typed, named business-rule exceptions (same convention as `modules/auth/
@@ -55,5 +61,28 @@ export class TenantResourceNotFoundException extends NotFoundException {
       message: 'Resource not found.',
       details: [],
     });
+  }
+}
+
+/**
+ * `402 TENANT_SUSPENDED` (API_SPECIFICATION.md Section 2.3.1) — thrown by
+ * `TenantActiveGuard` (Milestone 3) when a tenant-scoped mutating request
+ * targets a `SUSPENDED`/`CANCELLED` tenant. A structural skeleton only: no
+ * plan-limit logic here, that's Milestone 8. `SUPER_ADMIN` always bypasses
+ * this guard (a support action against a suspended tenant is exactly the
+ * scenario Super Admin access exists for), so this exception is never
+ * thrown for a `SUPER_ADMIN` caller.
+ */
+export class TenantSuspendedException extends HttpException {
+  constructor() {
+    super(
+      {
+        code: ERROR_CODES.TENANT_SUSPENDED,
+        message:
+          'This tenant is suspended or cancelled and cannot perform this action.',
+        details: [],
+      },
+      HttpStatus.PAYMENT_REQUIRED,
+    );
   }
 }

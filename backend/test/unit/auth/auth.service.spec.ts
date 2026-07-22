@@ -22,6 +22,7 @@ import { RegistrationRepositoryPort } from '../../../src/modules/auth/domain/por
 import { TenantRepositoryPort } from '../../../src/modules/auth/domain/ports/tenant-repository.port';
 import { UserRepositoryPort } from '../../../src/modules/auth/domain/ports/user-repository.port';
 import { NotificationsService } from '../../../src/modules/notifications/application/notifications.service';
+import { TenantInvitationService } from '../../../src/modules/tenants/application/tenant-invitation.service';
 
 const meta = { userAgent: 'jest', ipAddress: '127.0.0.1' };
 
@@ -92,6 +93,9 @@ describe('AuthService', () => {
     >
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, 'sendEmail'>>;
+  let invitations: jest.Mocked<
+    Pick<TenantInvitationService, 'validateAndConsume' | 'markAccepted'>
+  >;
   let configService: { getOrThrow: jest.Mock };
   let service: AuthService;
 
@@ -104,7 +108,10 @@ describe('AuthService', () => {
       updatePassword: jest.fn(),
     };
     tenants = { findById: jest.fn() };
-    registration = { registerTenantOwner: jest.fn() };
+    registration = {
+      registerTenantOwner: jest.fn(),
+      registerInvitedUser: jest.fn(),
+    };
     emailVerifications = {
       create: jest.fn(),
       findByHash: jest.fn(),
@@ -140,6 +147,7 @@ describe('AuthService', () => {
       recordSuccess: jest.fn(),
     };
     notifications = { sendEmail: jest.fn() };
+    invitations = { validateAndConsume: jest.fn(), markAccepted: jest.fn() };
     configService = {
       getOrThrow: jest.fn((key: string) => CONFIG_VALUES[key]),
     };
@@ -157,6 +165,7 @@ describe('AuthService', () => {
       loginAttempts as unknown as LoginAttemptService,
       notifications as unknown as NotificationsService,
       configService as unknown as ConstructorParameters<typeof AuthService>[11],
+      invitations as unknown as TenantInvitationService,
     );
   });
 
@@ -408,14 +417,15 @@ describe('AuthService', () => {
       users.findById.mockResolvedValue(makeUser());
       tenants.findById.mockResolvedValue(makeTenant());
 
-      const result = await service.me('user-1');
+      const result = await service.me('user-1', 'tenant-1');
       expect(result.user.id).toBe('user-1');
       expect(result.tenant?.id).toBe('tenant-1');
+      expect(result.activeTenantId).toBe('tenant-1');
     });
 
     it('rejects if the authenticated user id no longer resolves to a user', async () => {
       users.findById.mockResolvedValue(null);
-      await expect(service.me('ghost')).rejects.toBeInstanceOf(
+      await expect(service.me('ghost', null)).rejects.toBeInstanceOf(
         UnauthorizedException,
       );
     });

@@ -20,8 +20,10 @@ import {
   THROTTLE_PUBLIC_SENSITIVE,
   THROTTLE_STANDARD_AUTHENTICATED,
 } from '../../../common/constants/auth.constants';
+import { TenantContextService } from '../../../core/context/tenant-context.service';
 import { AuthService } from '../application/auth.service';
 import { RequestMeta } from '../application/session.service';
+import { AcceptInvitationDto } from './dto/accept-invitation.dto';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
@@ -43,6 +45,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
+    private readonly tenantContext: TenantContextService,
   ) {}
 
   @Post('register')
@@ -121,10 +124,42 @@ export class AuthController {
   @SkipThrottle({ [THROTTLE_PUBLIC_SENSITIVE]: true })
   @Throttle({ [THROTTLE_STANDARD_AUTHENTICATED]: { limit: 120, ttl: 60_000 } })
   async me(@CurrentUser() currentUser: { sub: string }) {
-    const { user, tenant } = await this.authService.me(currentUser.sub);
+    // Resolved via TenantContextService (docs/adr/ADR-006), not
+    // `currentUser.tenantId` directly — so a Super Admin currently
+    // impersonating a tenant (via `X-Impersonate-Tenant-Id`) sees that
+    // tenant here, not `null`.
+    const effectiveTenantId = await this.tenantContext.getTenantId();
+    const { user, tenant, activeTenantId } = await this.authService.me(
+      currentUser.sub,
+      effectiveTenantId,
+    );
     return {
       user: toUserResponseDto(user),
       tenant: tenant ? toTenantResponseDto(tenant) : null,
+      activeTenantId,
+    };
+  }
+
+  @Post('accept-invitation')
+  @HttpCode(HttpStatus.OK)
+  @SkipThrottle({ [THROTTLE_STANDARD_AUTHENTICATED]: true })
+  @Throttle({ [THROTTLE_PUBLIC_SENSITIVE]: { limit: 10, ttl: 60_000 } })
+  async acceptInvitation(
+    @Body() dto: AcceptInvitationDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const session = await this.authService.acceptInvitation(
+      dto,
+      this.requestMeta(request),
+    );
+    this.setRefreshCookie(response, session.rawRefreshToken);
+
+    return {
+      user: toUserResponseDto(session.user),
+      tenant: session.tenant ? toTenantResponseDto(session.tenant) : null,
+      accessToken: session.accessToken,
+      expiresIn: session.expiresIn,
     };
   }
 

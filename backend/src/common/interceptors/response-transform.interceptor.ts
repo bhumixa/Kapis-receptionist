@@ -8,6 +8,7 @@ import { Request } from 'express';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { SuccessResponse } from '../interfaces/api-response.interface';
+import { isPaginatedPayload } from '../utils/paginated-response.util';
 
 /**
  * Wraps every controller return value in the standard success envelope
@@ -33,13 +34,23 @@ export class ResponseTransformInterceptor<T> implements NestInterceptor<
     }
 
     return next.handle().pipe(
-      map((data) => ({
-        success: true as const,
-        data,
-        meta: null,
-        message: null,
-        requestId: request.requestId,
-      })),
+      map((result) =>
+        isPaginatedPayload(result)
+          ? {
+              success: true as const,
+              data: result.data as T,
+              meta: result.meta,
+              message: null,
+              requestId: request.requestId,
+            }
+          : {
+              success: true as const,
+              data: result,
+              meta: null,
+              message: null,
+              requestId: request.requestId,
+            },
+      ),
     );
   }
 }
