@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [Semantic Versioning](https://semver.org/) as defined in IMPLEMENTATION_ROADMAP.md Section 2.8 (platform release version, distinct from the API's own `/api/v1` URI versioning).
 
+## [Unreleased] — Milestone 3: Authorization (Sprint 2.4 — RBAC)
+
+Full technical reference: [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) Section 6b, [docs/SECURITY.md](docs/SECURITY.md), decision record: [docs/adr/ADR-005-rbac.md](docs/adr/ADR-005-rbac.md). IMPLEMENTATION_ROADMAP.md calls this slot "Sprint 3.1"; this release implements a narrower, RBAC-only charter — see the ADR.
+
+### Added
+- **Backend** (`Core` module, previously empty): `PermissionResolverService` (resolves a user's effective permission set as the union across all held roles, Redis-cached per role — `rbac:role-permissions:{RoleName}`, TTL `RBAC_PERMISSION_CACHE_TTL_SECONDS`); four guards — `RolesGuard`, `PermissionGuard`, `TenantScopedGuard`, `SuperAdminGuard` — all composing on the existing `JwtAuthGuard`; `@Roles()`, `@RequirePermission()`, `@CurrentTenant()` decorators; request-scoped `TenantContextService`; a guard-layer role-rank interpretation (`SUPER_ADMIN` > `OWNER` > `MANAGER` > `STAFF`) for "role hierarchy," leaving the underlying flat `Role`/`Permission`/`RolePermission` schema unchanged.
+- **Security:** an explicit, logged `SUPER_ADMIN` bypass on `RolesGuard`/`PermissionGuard` (`SuperAdminBypassService`, new `SUPER_ADMIN_BYPASS` `SecurityEventService` event type) — a deliberate, requester-confirmed deviation from SYSTEM_ARCHITECTURE.md Section 8.4's original design; see the ADR for full reasoning and mitigations.
+- **Frontend:** `PermissionService.can(permission): Signal<boolean>`, `roleGuard` (route-level, reads `data.roles`), `*appHasPermission` structural directive (hide-only), `filterNavItemsByAccess()` nav-filtering utility — all deliberate, documented mirrors of the backend's rank/permission logic (no shared types package exists).
+- **Testing:** new backend unit tests for the permission resolver, role-rank truth table, all four guards, and the bypass service; a test-only `RbacProbeController`/`RbacProbeModule` (mounted only by the integration test bootstrap, never production) proving the guards over real HTTP; a full authorization matrix integration test (every role × every guarded probe route) doubling as a regression guard on `prisma/seed.ts`'s permission matrix; dedicated `TenantScopedGuard` and `SUPER_ADMIN` bypass-logging integration tests; new `seedManager`/`seedStaff`/`seedSuperAdmin` helpers in `test-app.factory.ts`; new frontend unit tests for `PermissionService`, `roleGuard`, `HasPermissionDirective`, and both rank/nav-filter utilities.
+- **Documentation:** new `docs/SECURITY.md`; new `docs/adr/ADR-005-rbac.md`; `docs/AUTHENTICATION.md` Section 6b; `docs/API_SPECIFICATION.md` Section 2.14 amended (SUPER_ADMIN bypass) and Section 2.14.1 added (RBAC error semantics); `docs/IMPLEMENTATION_ROADMAP.md` execution note under Sprint 3.1; `docs/DECISIONS.md` ADR-005 entry.
+
+### Known Limitations
+- The full `Tenants` business module (`TenantSettings`, `TenantFeature`), the composite-FK cross-tenant relation pattern, and the standing tenant-isolation regression suite (roadmap Sprint 3.1's broader scope) remain open.
+- `TenantScopedGuard`'s per-resource-ID ownership check is a documented open item — no tenant-owned business resource exists yet to check against.
+- `TenantActiveGuard` (frontend and backend) is not built this sprint.
+- No `Users`/`UserRole` CRUD or role-assignment endpoint exists — role changes after registration aren't possible yet, and the resulting session/JWT-invalidation question is a documented open gap.
+- Google OAuth, MFA/WebAuthn, and a CSRF double-submit token on `/auth/refresh` remain out of scope (unchanged from prior sprints).
+
 ## [Unreleased] — Milestone 2: Authentication (Sprint 2.3 — Account Security)
 
 Full technical reference: [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) Section 6a, decision record: [docs/adr/ADR-004-account-security.md](docs/adr/ADR-004-account-security.md).

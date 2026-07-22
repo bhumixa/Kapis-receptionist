@@ -72,6 +72,10 @@ import {
   ],
   // TokenService/JwtAuthGuard exported for Milestone 3's RolesGuard/
   // TenantScopedGuard (SYSTEM_ARCHITECTURE.md Section 7.3) to compose with.
-  exports: [TokenService, JwtAuthGuard],
+  // SecurityEventService additionally exported for Sprint 2.4's
+  // SuperAdminBypassService (docs/adr/ADR-005-rbac.md) to log bypass usage
+  // through the same structured-event mechanism, rather than a second
+  // logging path.
+  exports: [TokenService, JwtAuthGuard, SecurityEventService],
 })
 export class AuthModule {}

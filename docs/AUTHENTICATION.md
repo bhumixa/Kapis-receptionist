@@ -3,9 +3,9 @@
 ## Core Authentication — Implementation Reference
 
 **Document Status:** As-Built
-**Milestone:** 2 — Authentication (Core Authentication sprint + Sprint 2.3 "Account Security" follow-up)
-**Depends on:** SYSTEM_ARCHITECTURE.md §7–9, PRISMA_SCHEMA.md §3, API_SPECIFICATION.md §4, FRONTEND_ARCHITECTURE.md §5, docs/adr/ADR-002-authentication-schema.md, docs/adr/ADR-003-core-authentication.md, docs/adr/ADR-004-account-security.md
-**Scope:** What was actually built across both sprints — Register, Login, Logout, Refresh, Get Current User, Email Verification, Resend Verification, Password Reset, Password Reset Confirmation, Login Attempt Tracking, Temporary Account Lockout — and every security decision behind it. Google OAuth and RBAC authorization are explicitly **not** covered here; see "Out of Scope" below.
+**Milestone:** 2–3 — Authentication (Core Authentication sprint + Sprint 2.3 "Account Security" follow-up) and the RBAC-enforcement slice of Milestone 3 (Sprint 2.4 "Authorization / RBAC")
+**Depends on:** SYSTEM_ARCHITECTURE.md §7–9, PRISMA_SCHEMA.md §3, API_SPECIFICATION.md §4/2.14, FRONTEND_ARCHITECTURE.md §5, docs/adr/ADR-002-authentication-schema.md, docs/adr/ADR-003-core-authentication.md, docs/adr/ADR-004-account-security.md, docs/adr/ADR-005-rbac.md
+**Scope:** What was actually built across these sprints — Register, Login, Logout, Refresh, Get Current User, Email Verification, Resend Verification, Password Reset, Password Reset Confirmation, Login Attempt Tracking, Temporary Account Lockout, RBAC enforcement (permission resolver, guards, decorators, role hierarchy, the SUPER_ADMIN bypass) — and every security decision behind it. Google OAuth is explicitly **not** covered here; see "Out of Scope" below.
 
 ---
 
@@ -164,6 +164,41 @@ A minimal `NotificationsService.sendEmail(to, subject, html, text)` (new `src/mo
 
 ---
 
+## 6b. Authorization / RBAC (Sprint 2.4, docs/adr/ADR-005-rbac.md)
+
+Builds on the `Role`/`Permission`/`RolePermission`/`UserRole` schema and `roles: RoleName[]` JWT claim that already existed (§3, ADR-002) — this sprint is enforcement, not schema work.
+
+### 6b.1 Permission Resolver
+
+`PermissionResolverService` (`src/core/`) resolves a user's effective permission set as the **union** across every role they hold (`User.roles` is many-to-many via `UserRole`, so more than one is possible even though today's seed data never assigns more than one). Per-role lookups are cached in Redis — key `rbac:role-permissions:{RoleName}`, value the role's permission-key array, TTL `RBAC_PERMISSION_CACHE_TTL_SECONDS` (default 3600s). Invalidation is TTL-only this sprint: `RolePermission` rows are only ever written by `prisma/seed.ts` today, so there's no runtime write path to actively invalidate against yet.
+
+### 6b.2 Guards
+
+Four guards, all composing on `JwtAuthGuard`'s `request.user` (per that guard's own doc comment, written in anticipation of this sprint):
+
+- **`RolesGuard`** — enforces `@Roles(RoleName)`. Opt-in: a route with no `@Roles()` metadata is unrestricted by this guard.
+- **`PermissionGuard`** — enforces `@RequirePermission('resource:action')`, delegating to `PermissionResolverService`.
+- **`TenantScopedGuard`** — baseline "resolvable tenant context" check: `SUPER_ADMIN` passes unconditionally (no fixed tenant by design), every other role must carry a non-null `tenantId`. Does **not** yet check that a specific tenant-owned resource (looked up by `:id`) belongs to the caller's tenant — no such resource exists yet to check against; that per-resource-ID extension is a documented open item for whichever module builds one first.
+- **`SuperAdminGuard`** — strict `SUPER_ADMIN`-only, no bypass logic (this guard *is* the check). Built ahead of its first consumer — no `/admin/*` controller exists yet.
+
+### 6b.3 Role Hierarchy
+
+Roles remain a flat set with a direct `RolePermission` mapping (unchanged schema). A guard-layer rank (`ROLE_RANK`: `SUPER_ADMIN`=100, `OWNER`=30, `MANAGER`=20, `STAFF`=10) is used only to decide whether a user's roles satisfy `@Roles()`'s requirement: `@Roles(RoleName.MANAGER)` — the convention is exactly one role, the minimum required — is satisfied by `MANAGER` or anything ranked higher.
+
+### 6b.4 The SUPER_ADMIN Bypass (Deviation — see §7)
+
+`SuperAdminBypassService`, called first by both `RolesGuard` and `PermissionGuard`, grants `SUPER_ADMIN` unconditional access to any role/permission requirement check and logs every use via `SecurityEventService.record('SUPER_ADMIN_BYPASS', { userId, tenantId, route, ...requirement })`. Full reasoning and mitigations: docs/adr/ADR-005-rbac.md.
+
+### 6b.5 Decorators & Tenant Context
+
+`@Roles(...roles)`, `@RequirePermission(key)`, `@CurrentTenant({ required? })` (reads `request.user.tenantId` directly, honestly nullable — `null` for `SUPER_ADMIN`). `TenantContextService` (request-scoped, `getTenantId()`/`requireTenantId()`/`getCurrentUser()`) ships this sprint with no consumer yet — no tenant-owned business module exists to inject it.
+
+### 6b.6 Frontend
+
+`PermissionService.can(permission): Signal<boolean>` and `roleGuard` (`CanActivateFn` reading `route.data.roles`) mirror the backend's permission map and role rank respectively — deliberate, documented duplicates (no shared types package exists), UX convenience only. The `*appHasPermission` structural directive hides (not yet disables) unauthorized UI. `filterNavItemsByAccess()` is a pure filtering utility, shipped ahead of any real nav/sidebar UI to consume it.
+
+---
+
 ## 7. Deviations from the Pre-Existing Documented Contract
 
 **As of the Core Authentication sprint** (ADR-003), two small, deliberate amendments were made to API_SPECIFICATION.md/FRONTEND_ARCHITECTURE.md, because that sprint's narrower scope (register/login/logout/refresh/me only) made the originally-documented behavior impossible or misleading as written:
@@ -173,14 +208,18 @@ A minimal `NotificationsService.sendEmail(to, subject, html, text)` (new `src/mo
 
 **As of Sprint 2.3, login now enforces `403 EMAIL_NOT_VERIFIED`** (§6a.3) — the gap the Core Authentication sprint left open (previously documented in this section as "a known, temporary gap") is closed.
 
+**As of Sprint 2.4 (ADR-005), `SUPER_ADMIN` is granted an explicit, logged bypass** on `RolesGuard`/`PermissionGuard` for tenant-scoped role/permission checks — a deliberate deviation from SYSTEM_ARCHITECTURE.md §8.4's original design, which specified zero implicit tenant-scoped power for Super Admin, acting only through a separate `/admin/*` surface. Confirmed with the requester before implementation. Mitigated by a single shared, tested chokepoint (`SuperAdminBypassService`) and mandatory audit logging (`SecurityEventService`); `TenantScopedGuard`'s resource-context checks are unaffected. Full reasoning: docs/adr/ADR-005-rbac.md.
+
 ---
 
 ## 8. Explicitly Out of Scope (Deferred, Not Forgotten)
 
 - **Google OAuth** — `POST /auth/google` and the frontend callback route.
-- **RBAC authorization enforcement** — `RolesGuard`/`PermissionGuard`/`TenantScopedGuard` (Milestone 3, SYSTEM_ARCHITECTURE.md §7.3–7.4). `User.roles` is populated and carried in the JWT this sprint, but nothing yet *checks* it — every authenticated user can currently reach every authenticated endpoint regardless of role, exactly as `@nestjs/throttler`-guarded-but-not-role-guarded implies. This is safe only because no role-sensitive endpoints exist yet in this sprint's scope.
 - **CSRF double-submit token** on `/auth/refresh` (SYSTEM_ARCHITECTURE.md §9.10) — deferred; `SameSite=Strict` + `HttpOnly` is the implemented primary control.
-- **`Users`/`Tenants` modules** as their own NestJS modules — `User`/`Tenant` Prisma access for this sprint lives inside `AuthModule`'s own `infrastructure/` layer (repositories scoped to what Auth needs), not a separate public module, following the same minimal-forward-provisioning precedent ADR-002 already established for the `Tenant` table itself. The real `Users` (staff CRUD, invitations) and `Tenants` (`TenantSettings`, `TenantFeature`, atomic register-provisions-a-tenant-with-`TenantSettings`+`Subscription` transaction) modules remain Milestone 3 scope.
+- **`Users`/`Tenants` modules** as their own NestJS modules — `User`/`Tenant` Prisma access for this sprint lives inside `AuthModule`'s own `infrastructure/` layer (repositories scoped to what Auth needs), not a separate public module, following the same minimal-forward-provisioning precedent ADR-002 already established for the `Tenant` table itself. The real `Users` (staff CRUD, invitations, role assignment) and `Tenants` (`TenantSettings`, `TenantFeature`, atomic register-provisions-a-tenant-with-`TenantSettings`+`Subscription` transaction) modules remain open, roadmap Sprint 3.1 scope.
+- **`TenantScopedGuard`'s per-resource-ID ownership check** (§6b.2) — no tenant-owned business resource exists yet to check against; a documented open item for whichever module (Employees/Customers, Sprint 4.1+) builds one first.
+- **`TenantActiveGuard`** (frontend and backend, plan-limit/subscription-status enforcement) — not built this sprint; its backend counterpart doesn't exist either, so a frontend skeleton would have nothing to enforce.
+- **Role-change → session/JWT invalidation** — a user's already-issued 15-minute access token still carries their old `roles` claim after a role change. Moot in practice this sprint (no code path to change a user's role after registration exists yet), but should be resolved via the existing `SessionService.revokeAllForUser()` once the `Users`/`UserRole` CRUD surface above is built.
 
 ---
 
@@ -208,6 +247,12 @@ Both secrets are validated at bootstrap (`env.validation.ts`) — a missing or t
 | `LOGIN_ATTEMPT_MAX` / `LOGIN_ATTEMPT_WINDOW_SECONDS` / `LOGIN_LOCKOUT_SECONDS` | Login-attempt-tracking thresholds (defaults: 5 attempts / 900s window / 900s lockout). |
 | `EMAIL_VERIFICATION_EXPIRES_IN_SECONDS` / `PASSWORD_RESET_EXPIRES_IN_SECONDS` | Token lifetimes (defaults: 86400 / 3600). |
 
+**Sprint 2.4 addition** (optional, sensible default):
+
+| Variable | Purpose |
+|---|---|
+| `RBAC_PERMISSION_CACHE_TTL_SECONDS` | How long `PermissionResolverService` caches a role's resolved permission set in Redis (default `3600`). TTL-only invalidation this sprint — see §6b.1/docs/adr/ADR-005-rbac.md. |
+
 ---
 
 ## 10. Frontend Architecture Summary
@@ -222,6 +267,7 @@ Per FRONTEND_ARCHITECTURE.md §5, implemented this sprint:
 - `features/auth/pages/{login-page,register-page}` — Reactive Forms, client-side validation mirroring the server's rules, inline error handling keyed off `ApiError.code`.
 - `features/auth/pages/{verify-email-page,forgot-password-page,reset-password-page}` (Sprint 2.3) — `verify-email-page` reads `:token` on load with no form and no guard (FRONTEND_ARCHITECTURE.md §5.4); `forgot-password-page`/`reset-password-page` mirror login/register's form conventions and are `guestOnlyGuard`-protected. `login-page` gained a "Forgot password?" link and inline `EMAIL_NOT_VERIFIED`/`ACCOUNT_LOCKED` handling, including a one-click resend-verification action.
 - `layouts/auth-layout`, `layouts/dashboard-layout` — the latter deliberately minimal this sprint (header identity + logout only); the full sidebar/nav chrome (FRONTEND_ARCHITECTURE.md §4.2) is built out once Milestone 3+ gives it real destinations.
+- `core/auth/permission.service.ts`, `core/guards/role.guard.ts`, `shared/directives/has-permission.directive.ts`, `shared/utils/{role-rank,nav-filter}.util.ts`, `shared/constants/role-permissions.constant.ts` (Sprint 2.4, §6b.6) — no existing route/nav UI wires these in yet; they ship as tested, ready primitives for the first feature module that needs them (roadmap Milestone 4+).
 
 Not built this sprint (per FRONTEND_ARCHITECTURE.md's own component-library note): the shared `Button`/`Input` primitive component library (§7) — the auth forms use plain, accessible native HTML elements styled directly with Tailwind. That library is a larger, separate design-system undertaking; building it wasn't required to ship a working, accessible auth UI, and every future feature is free to introduce it without this sprint's pages needing rework beyond a styling pass.
 
@@ -229,4 +275,4 @@ Not built this sprint (per FRONTEND_ARCHITECTURE.md's own component-library note
 
 ## 11. Files
 
-See docs/adr/ADR-003-core-authentication.md for the Core Authentication sprint's file manifest, and docs/adr/ADR-004-account-security.md for Sprint 2.3's — both include the sprint-scope rationale.
+See docs/adr/ADR-003-core-authentication.md for the Core Authentication sprint's file manifest, docs/adr/ADR-004-account-security.md for Sprint 2.3's, and docs/adr/ADR-005-rbac.md for Sprint 2.4's — all three include the sprint-scope rationale.

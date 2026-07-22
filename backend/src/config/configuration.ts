@@ -80,3 +80,17 @@ export const accountSecurityConfig = registerAs('accountSecurity', () => ({
     10,
   ),
 }));
+
+/**
+ * Authorization / RBAC (Sprint 2.4, docs/adr/ADR-005-rbac.md).
+ * `PermissionResolverService` caches each role's resolved permission set in
+ * Redis for this long — TTL-only invalidation this sprint (no runtime
+ * `RolePermission` mutation endpoint exists yet to actively invalidate
+ * against; see the ADR for the documented tradeoff).
+ */
+export const rbacConfig = registerAs('rbac', () => ({
+  permissionCacheTtlSeconds: parseInt(
+    process.env.RBAC_PERMISSION_CACHE_TTL_SECONDS ?? '3600',
+    10,
+  ),
+}));

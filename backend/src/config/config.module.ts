@@ -7,6 +7,7 @@ import {
   jwtConfig,
   loginSecurityConfig,
   mailConfig,
+  rbacConfig,
   redisConfig,
 } from './configuration';
 import { validateEnv } from './env.validation';
@@ -24,6 +25,7 @@ import { validateEnv } from './env.validation';
         mailConfig,
         loginSecurityConfig,
         accountSecurityConfig,
+        rbacConfig,
       ],
       validate: validateEnv,
     }),

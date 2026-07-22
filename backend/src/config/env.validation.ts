@@ -116,6 +116,11 @@ class EnvironmentVariables {
   @IsInt()
   @IsOptional()
   PASSWORD_RESET_EXPIRES_IN_SECONDS: number = 60 * 60;
+
+  // --- Authorization / RBAC (docs/adr/ADR-005-rbac.md) ---
+  @IsInt()
+  @IsOptional()
+  RBAC_PERMISSION_CACHE_TTL_SECONDS: number = 3600;
 }
 
 /**

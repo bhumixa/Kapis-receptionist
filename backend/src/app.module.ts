@@ -4,6 +4,7 @@ import { GlobalExceptionFilter } from './common/filters/global-exception.filter'
 import { ResponseTransformInterceptor } from './common/interceptors/response-transform.interceptor';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { ConfigModule } from './config/config.module';
+import { CoreModule } from './core/core.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { LoggerModule } from './logger/logger.module';
@@ -16,6 +17,7 @@ import { AuthModule } from './modules/auth/auth.module';
     DatabaseModule,
     HealthModule,
     AuthModule,
+    CoreModule,
   ],
   controllers: [],
   providers: [

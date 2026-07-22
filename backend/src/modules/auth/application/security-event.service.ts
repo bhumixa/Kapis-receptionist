@@ -15,7 +15,9 @@ export type SecurityEventType =
   | 'PASSWORD_RESET_REQUESTED'
   | 'PASSWORD_RESET_SUCCESS'
   | 'ACCOUNT_LOCKED'
-  | 'LOGIN_BLOCKED_LOCKED_OUT';
+  | 'LOGIN_BLOCKED_LOCKED_OUT'
+  // Sprint 2.4 — Authorization / RBAC (docs/adr/ADR-005-rbac.md)
+  | 'SUPER_ADMIN_BYPASS';
 
 export interface SecurityEventContext {
   userId?: string;
