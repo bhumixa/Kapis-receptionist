@@ -34,12 +34,21 @@ const PERMISSIONS = [
     key: 'settings:manage',
     description: 'Manage salon configuration and preferences',
   },
+  {
+    key: 'salon:manage',
+    description: 'Manage salon profile, branding, business hours, and holidays',
+  },
 ] as const;
 
 const ROLE_PERMISSIONS: Record<RoleName, readonly string[]> = {
   [RoleName.SUPER_ADMIN]: PERMISSIONS.map((p) => p.key),
   [RoleName.OWNER]: PERMISSIONS.map((p) => p.key),
-  [RoleName.MANAGER]: ['staff:invite', 'tenant:manage', 'settings:manage'],
+  [RoleName.MANAGER]: [
+    'staff:invite',
+    'tenant:manage',
+    'settings:manage',
+    'salon:manage',
+  ],
   [RoleName.STAFF]: [],
 };
 

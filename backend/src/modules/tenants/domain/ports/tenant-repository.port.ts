@@ -1,4 +1,4 @@
-import { TenantStatus } from '@prisma/client';
+import { Prisma, TenantStatus } from '@prisma/client';
 import { TenantEntity } from '../entities/tenant.entity';
 
 export const TENANT_REPOSITORY = Symbol('TENANT_REPOSITORY');
@@ -35,9 +35,17 @@ export interface AdminTenantListResult {
  */
 export interface TenantRepositoryPort {
   findById(id: string): Promise<TenantEntity | null>;
+  /**
+   * Optional trailing `tx`: lets `modules/salon`'s `SalonProfileService`
+   * compose this write with its own `SalonProfile` upsert inside one
+   * `prisma.$transaction`, so `PATCH /salon` can't partially apply (docs/
+   * adr/ADR-007-salon-management.md). Every existing call site omits `tx`
+   * and is unaffected — defaults to the singleton `PrismaService`.
+   */
   updateProfile(
     id: string,
     input: UpdateTenantProfileInput,
+    tx?: Prisma.TransactionClient,
   ): Promise<TenantEntity>;
   updateStatus(
     id: string,

@@ -78,6 +78,18 @@ export class ApiClient {
       );
   }
 
+  put<T>(path: string, body: unknown, options?: ApiRequestOptions): Observable<T> {
+    return this.http
+      .put<ApiSuccessEnvelope<T>>(this.url(path), body, {
+        params: options?.params,
+        ...WITH_CREDENTIALS,
+      })
+      .pipe(
+        map((envelope) => envelope.data),
+        catchError((error: unknown) => this.handleError(error)),
+      );
+  }
+
   delete<T>(path: string, options?: ApiRequestOptions): Observable<T> {
     return this.http
       .delete<ApiSuccessEnvelope<T>>(this.url(path), {

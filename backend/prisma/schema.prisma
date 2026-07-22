@@ -226,10 +226,13 @@ model Tenant {
   updatedAt     DateTime     @updatedAt
   deletedAt     DateTime?
 
-  users       User[]
-  invitations TenantInvitation[]
-  settings    TenantSettings?
-  auditLogs   AuditLog[]
+  users         User[]
+  invitations   TenantInvitation[]
+  settings      TenantSettings?
+  auditLogs     AuditLog[]
+  salonProfile  SalonProfile?
+  businessHours BusinessHours[]
+  holidays      Holiday[]
 
   @@index([status], name: "idx_tenants_status")
   @@map("tenants")
@@ -281,6 +284,76 @@ model TenantInvitation {
   @@index([tenantId], name: "idx_tenant_invitations_tenant_id")
   @@index([email], name: "idx_tenant_invitations_email")
   @@map("tenant_invitations")
+}
+
+// --- Salon Models (Milestone 4, docs/SALON_ARCHITECTURE.md,
+// docs/adr/ADR-007-salon-management.md) --------------------------------------
+// SalonProfile is a 1:1 satellite table on Tenant, mirroring TenantSettings'
+// precedent: Tenant already owns the "core" salon identity (name/timezone/
+// address/locale, exposed via GET/PATCH /tenant since Milestone 3) — this
+// table holds only the genuinely new business-facing fields Milestone 4
+// introduces. `logoUrl` is a bare placeholder string (no Files/S3 module
+// exists yet) — deliberately not reusing PRISMA_SCHEMA.md's reserved
+// `Tenant.logoFileId` name/shape, so the eventual real Files-backed field
+// doesn't collide with this milestone's placeholder.
+//
+// BusinessHours/Holiday intentionally use the field names/shapes
+// docs/PRISMA_SCHEMA.md Section 4 already reserves for a future, broader
+// Employee/Branch-aware version of these tables (no `employeeId`/`branchId`
+// columns yet — those modules don't exist) — so a later milestone only adds
+// columns, never renames. Holiday's `@@unique([tenantId, date])` is the
+// correct constraint for this milestone's tenant-wide-only scope; adding
+// `employeeId` later requires replacing it with a manual partial unique
+// index (`WHERE employee_id IS NULL`), not a naive 3-column @@unique — see
+// docs/SALON_ARCHITECTURE.md.
+
+model SalonProfile {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String   @unique @db.Uuid
+  description    String?  @db.VarChar(1000)
+  contactEmail   String?  @db.VarChar(255)
+  contactPhone   String?  @db.VarChar(20)
+  website        String?  @db.VarChar(255)
+  currency       String   @default("USD") @db.Char(3)
+  logoUrl        String?  @db.VarChar(500)
+  primaryColor   String?  @db.VarChar(7)
+  secondaryColor String?  @db.VarChar(7)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("salon_profiles")
+}
+
+model BusinessHours {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String   @db.Uuid
+  dayOfWeek Int      @db.SmallInt // 0=Sunday..6=Saturday
+  startTime DateTime @db.Time
+  endTime   DateTime @db.Time
+  isClosed  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, dayOfWeek], name: "uq_business_hours_tenant_day")
+  @@map("business_hours")
+}
+
+model Holiday {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String   @db.Uuid
+  date      DateTime @db.Date
+  reason    String   @db.VarChar(255)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, date], name: "uq_holidays_tenant_date")
+  @@map("holidays")
 }
 
 // --- System / Audit Models (Milestone 3 pull-forward from Milestone 9;

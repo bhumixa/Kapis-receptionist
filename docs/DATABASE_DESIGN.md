@@ -402,7 +402,35 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 
 ---
 
+#### 3.2.4 `salon_profiles` *(Added, Milestone 4 — docs/adr/ADR-007-salon-management.md)*
+**Purpose:** One-to-one satellite record per tenant holding the business-facing profile fields Milestone 4 introduces — `Tenant` itself already owns the core identity fields (`name`/`timezone`/`address*`/`default_locale`), so this table holds only what's genuinely new (mirrors `tenant_settings`' own 1:1-satellite-table precedent).
+**Columns:**
+| Column | Type | Null | Default | Description |
+|---|---|---|---|---|
+| `tenant_id` | UUID | No | — | FK → `tenants.id`, also unique (1:1) |
+| `description` | VARCHAR(1000) | Yes | `null` | |
+| `contact_email` | VARCHAR(255) | Yes | `null` | |
+| `contact_phone` | VARCHAR(20) | Yes | `null` | E.164 |
+| `website` | VARCHAR(255) | Yes | `null` | |
+| `currency` | CHAR(3) | No | `'USD'` | ISO 4217 |
+| `logo_url` | VARCHAR(500) | Yes | `null` | Placeholder string — no `Files`/S3 module exists yet; deliberately not `tenants.logo_file_id` (reserved for a future real upload) |
+| `primary_color` | VARCHAR(7) | Yes | `null` | Hex, e.g. `#4A90D9` |
+| `secondary_color` | VARCHAR(7) | Yes | `null` | |
+
++ `created_at` / `updated_at` (no separate soft delete — deleted alongside tenant, `onDelete: Cascade`).
+**Primary Key:** `id` (surrogate, despite 1:1 — same convention as `tenant_settings`). **Foreign Keys:** `tenant_id` → `tenants.id`.
+**Unique Constraints:** `uq_salon_profiles_tenant_id` (enforces the 1:1 relationship — Prisma's `@unique` on `tenantId`).
+**Indexes:** covered by the unique constraint.
+**Relationships:** one-to-one with `Tenant`.
+**Business Rules:** auto-created on first `GET /salon` if absent (`upsert`), same backfill convention as `tenant_settings`. `Tenant.timezone`/`default_locale`/`name`/`address*` are never duplicated here — always read/written through `modules/tenants`' own repository (docs/SALON_ARCHITECTURE.md Section 3).
+**Expected Row Growth:** Exactly one row per tenant (once backfilled).
+**Frequently Queried Columns:** `tenant_id`.
+
+---
+
 ### 3.3 Salon (Staff & Catalog)
+
+**Milestone 4 note (docs/adr/ADR-007-salon-management.md):** the two tables below (`business_hours`, `holidays`) were built in Milestone 4 as scoped-down subsets of this section's fuller design — no `employee_id` column exists yet on either (Employees don't exist until the renumbered Milestone 5), so both are tenant-wide only for now. Field names/shapes match this section's design exactly, so that future milestone's migration only *adds* columns. See each table's own "Amended, Milestone 4" note below, and docs/SALON_ARCHITECTURE.md for the as-built reference.
 
 #### 3.3.1 `employees`
 **Purpose:** A schedulable staff resource — distinct from `User` (login access); an `Employee` may optionally link to a `User`.
@@ -481,6 +509,20 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 
 ---
 
+#### 3.3.4a `business_hours` *(Added, Milestone 4 — docs/adr/ADR-007-salon-management.md)*
+**Purpose:** The salon's recurring weekly opening hours — distinct from per-employee `working_hours` below (a salon can be open while a given employee isn't scheduled, and vice versa).
+**Columns:** `day_of_week` SMALLINT (0=Sunday..6=Saturday); `start_time` TIME; `end_time` TIME; `is_closed` BOOLEAN default `false`.
++ Standard Tenant-Owned Fields (no `employee_id`/`branch_id` yet — see the Milestone 4 note above §3.3).
+**Primary Key:** `id`. **Foreign Keys:** `tenant_id` → `tenants.id` (`onDelete: Cascade`).
+**Unique Constraints:** `uq_business_hours_tenant_day` on `(tenant_id, day_of_week)`.
+**Indexes:** covered by the unique constraint.
+**Relationships:** belongs to `Tenant`.
+**Business Rules:** `end_time` must be after `start_time` unless `is_closed`, and exactly 7 rows (one per `day_of_week`, 0–6) must exist after any `PUT /salon/business-hours` — enforced at the application layer (`BusinessHoursService`), not a DB constraint. A closed day still stores a `'00:00'`/`'00:00'` placeholder (`start_time`/`end_time` are `NOT NULL`) — clients must key off `is_closed`, never assume null times. Wall-clock storage only; timezone interpretation is `tenants.timezone`, read separately.
+**Expected Row Growth:** Exactly 7 rows per tenant (once backfilled via the first `PUT`).
+**Frequently Queried Columns:** `(tenant_id, day_of_week)`.
+
+---
+
 #### 3.3.5 `working_hours`
 **Purpose:** Recurring weekly schedule template per employee (e.g., "Tuesdays 9am–5pm").
 **Columns:** `employee_id` UUID; `day_of_week` SMALLINT (0=Sunday..6=Saturday); `start_time` TIME; `end_time` TIME; `is_active` BOOLEAN default `true`.
@@ -506,6 +548,7 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 **Business Rules:** A tenant-wide holiday (`employee_id IS NULL`) blocks availability for all employees on that date; an employee-specific holiday blocks only that employee.
 **Expected Row Growth:** Low-moderate — a handful of tenant-wide holidays per year plus occasional per-employee entries.
 **Frequently Queried Columns:** `(tenant_id, date)`.
+**Amended, Milestone 4 (docs/adr/ADR-007-salon-management.md) — as-built is a scoped-down subset:** no `employee_id` column exists yet (tenant-wide only), `reason` is **required** (not nullable — a salon-wide calendar entry always needs a display label), and the unique constraint actually built is a plain `uq_holidays_tenant_date` on `(tenant_id, date)` — correct and sufficient with no `employee_id` column at all. **Forward note for whichever milestone adds `employee_id`:** switching straight to a naive 3-column `@@unique([tenant_id, date, employee_id])` would silently stop preventing duplicate tenant-wide holidays, since Postgres treats every `NULL` as distinct in an ordinary unique index — that migration must add the partial index this section already specifies (`uq_holidays_tenant_date_employee ... WHERE employee_id IS NULL`) via manual migration SQL (PRISMA_SCHEMA.md Section 14.4's mechanism), not rely on Prisma's declarative `@@unique` alone.
 
 ---
 

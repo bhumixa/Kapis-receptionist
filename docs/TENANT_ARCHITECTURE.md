@@ -127,6 +127,8 @@ Per explicit instruction, authenticated responses return the *resolved* tenant c
 
 DATABASE_DESIGN.md's Risk DB-R1 and PRISMA_SCHEMA.md §14.4 specify a composite-FK pattern for relations *between two tenant-owned entities* (e.g. a future `Employee` referencing a `Service`): a compound unique `(tenantId, id)` on the referenced table plus a compound FK `(tenantId, xId) REFERENCES x(tenantId, id)` on the referencing table. **No model in this milestone's scope needs it** — `TenantSettings`/`TenantInvitation` both only reference `Tenant` directly, never each other. This is the mandatory convention for Milestone 4 onward (starting with `Employee`↔`Service`): add the compound unique index and compound FK in the same migration that introduces the second tenant-owned entity in the relation, following the exact manual-migration-SQL mechanism PRISMA_SCHEMA.md §14.4 already specifies.
 
+**Amended, Milestone 4 (docs/adr/ADR-007-salon-management.md):** Milestone 4 was rescoped to the salon business-profile domain only (profile, branding, business hours, holidays — docs/SALON_ARCHITECTURE.md); its new `SalonProfile`/`BusinessHours`/`Holiday` tables all reference `Tenant` directly, same as `TenantSettings`/`TenantInvitation`, so the composite-FK pattern remains dormant through Milestone 4. It becomes load-bearing starting the renumbered Milestone 5's `Employee`↔`Service` relation instead.
+
 ---
 
 ## 5. Platform Admin Tenant Switching (Impersonation)

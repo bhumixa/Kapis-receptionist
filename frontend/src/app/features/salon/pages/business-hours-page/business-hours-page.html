@@ -1,0 +1,88 @@
+<div class="max-w-3xl space-y-6">
+  <div>
+    <h1 class="text-xl font-semibold text-gray-900">Salon</h1>
+    <p class="text-sm text-gray-500 mt-1">Manage your salon's profile, branding, hours, and holidays.</p>
+  </div>
+
+  <nav class="flex items-center gap-4 border-b border-gray-200">
+    <a
+      routerLink="/app/salon"
+      class="px-1 pb-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-900"
+    >
+      Profile
+    </a>
+    <a
+      routerLink="/app/salon/business-hours"
+      class="px-1 pb-3 text-sm font-medium border-b-2 border-gray-900 text-gray-900"
+    >
+      Business hours
+    </a>
+    <a
+      routerLink="/app/salon/holidays"
+      class="px-1 pb-3 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-900"
+    >
+      Holidays
+    </a>
+  </nav>
+
+  @if (isLoading()) {
+    <p class="text-sm text-gray-500">Loading...</p>
+  } @else {
+    @if (saved()) {
+      <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">
+        Business hours updated.
+      </div>
+    }
+    @if (error(); as message) {
+      <div class="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800" role="alert">
+        {{ message }}
+      </div>
+    }
+
+    <form [formGroup]="form" (ngSubmit)="save()" novalidate class="space-y-3">
+      <div formArrayName="days" class="rounded-md border border-gray-200 divide-y divide-gray-100">
+        @for (group of dayGroups; track group; let i = $index) {
+          <div [formGroupName]="i" class="flex items-center gap-4 px-4 py-3">
+            <span class="w-24 text-sm font-medium text-gray-700">{{ dayLabels[i] }}</span>
+            <label class="flex items-center gap-2 text-sm text-gray-600">
+              <input
+                type="checkbox"
+                formControlName="isClosed"
+                [disabled]="!canManageSalon()"
+                class="rounded border-gray-300"
+              />
+              Closed
+            </label>
+            @if (!group.controls.isClosed.value) {
+              <input
+                type="time"
+                formControlName="startTime"
+                [readonly]="!canManageSalon()"
+                class="rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              />
+              <span class="text-sm text-gray-400">to</span>
+              <input
+                type="time"
+                formControlName="endTime"
+                [readonly]="!canManageSalon()"
+                class="rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              />
+            } @else {
+              <span class="text-sm text-gray-400">Closed all day</span>
+            }
+          </div>
+        }
+      </div>
+
+      @if (canManageSalon()) {
+        <button
+          type="submit"
+          [disabled]="isSaving()"
+          class="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+        >
+          {{ isSaving() ? 'Saving...' : 'Save business hours' }}
+        </button>
+      }
+    </form>
+  }
+</div>

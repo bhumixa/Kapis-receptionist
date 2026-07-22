@@ -12,6 +12,7 @@ import { LoggerModule } from './logger/logger.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { TenantsModule } from './modules/tenants/tenants.module';
+import { SalonModule } from './modules/salon/salon.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { TenantsModule } from './modules/tenants/tenants.module';
     CoreModule,
     TenantsModule,
     AdminModule,
+    SalonModule,
   ],
   controllers: [],
   providers: [

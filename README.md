@@ -2,7 +2,7 @@
 
 AI-powered WhatsApp appointment booking SaaS for salons and beauty businesses — a multi-tenant platform where an AI receptionist answers customer questions, books/reschedules/cancels appointments, and hands off to staff when needed, all inside WhatsApp.
 
-**Status:** In development — Milestone 1 (Project Foundation) complete; Milestone 2 (Authentication) complete — Core Authentication (Register/Login/Logout/Refresh/Get Current User) and Sprint 2.3 Account Security (email verification + resend, password reset, login-attempt tracking/lockout), both stacks, done; the RBAC-enforcement slice of Milestone 3 (Sprint 2.4 Authorization/RBAC — permission resolver, guards, decorators, role hierarchy, the SUPER_ADMIN bypass, both stacks) also done — see [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md), [docs/SECURITY.md](docs/SECURITY.md), [docs/adr/ADR-003-core-authentication.md](docs/adr/ADR-003-core-authentication.md), [docs/adr/ADR-004-account-security.md](docs/adr/ADR-004-account-security.md), and [docs/adr/ADR-005-rbac.md](docs/adr/ADR-005-rbac.md). See [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for the full milestone/sprint plan.
+**Status:** In development — Milestone 1 (Project Foundation) complete; Milestone 2 (Authentication) complete — Core Authentication (Register/Login/Logout/Refresh/Get Current User) and Sprint 2.3 Account Security (email verification + resend, password reset, login-attempt tracking/lockout), both stacks, done; Milestone 3 (Multi-Tenant SaaS Engine) complete — tenant profile/settings/invitations, RBAC enforcement, the tenant-context resolution mechanism, Platform Admin impersonation, and a platform-wide audit trail, both stacks, done; Milestone 4 (Salon Management) complete — salon business profile, branding, business hours, and holiday management, both stacks, done — see [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md), [docs/SECURITY.md](docs/SECURITY.md), [docs/TENANT_ARCHITECTURE.md](docs/TENANT_ARCHITECTURE.md), [docs/SALON_ARCHITECTURE.md](docs/SALON_ARCHITECTURE.md), and [docs/adr/](docs/adr/) for the full decision record of each milestone. See [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for the full (now eleven-milestone) plan.
 
 ## Documentation
 
@@ -17,6 +17,8 @@ This project is built documentation-first. Every implementation decision traces 
 | [API_SPECIFICATION.md](docs/API_SPECIFICATION.md) | REST API contract between frontend and backend |
 | [FRONTEND_ARCHITECTURE.md](docs/FRONTEND_ARCHITECTURE.md) | Angular application architecture, component library, state management |
 | [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) | Milestones, sprints, coding standards, quality gates, AI collaboration rules |
+| [TENANT_ARCHITECTURE.md](docs/TENANT_ARCHITECTURE.md) | Multi-tenant SaaS engine as-built reference (Milestone 3) |
+| [SALON_ARCHITECTURE.md](docs/SALON_ARCHITECTURE.md) | Salon management as-built reference (Milestone 4) |
 | [DECISIONS.md](docs/DECISIONS.md) | Running log of architecture decisions made during implementation (ADRs) |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 | [docs/releases/](docs/releases/) | Per-release notes (what shipped, verification results, known limitations) |

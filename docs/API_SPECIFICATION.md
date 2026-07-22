@@ -257,8 +257,43 @@ TenantDTO {
   city: string | null
   countryCode: string | null
   defaultLocale: string
-  logoUrl: string | null         // pre-signed S3 URL, resolved server-side from logoFileId
+  logoUrl: string | null         // Amended, Milestone 4: superseded by GET /salon's own logoUrl (a placeholder string, Section 6a) — stays null here until a future Files module resolves this field from logoFileId
   trialEndsAt: datetime | null
+  createdAt: datetime
+}
+
+// Added, Milestone 4/docs/adr/ADR-007 — GET/PATCH /salon's composed response
+// shape (Tenant's existing identity fields + SalonProfile's new fields).
+SalonProfileDTO {
+  name: string
+  addressLine1: string | null
+  addressLine2: string | null
+  city: string | null
+  countryCode: string | null
+  timezone: string
+  defaultLocale: string
+  description: string | null
+  contactEmail: string | null
+  contactPhone: string | null
+  website: string | null
+  currency: string                // ISO 4217, e.g. "USD"
+  logoUrl: string | null          // placeholder string — no Files/S3 module yet
+  primaryColor: string | null     // hex, e.g. "#4A90D9"
+  secondaryColor: string | null
+  updatedAt: datetime
+}
+
+BusinessHoursDayDTO {
+  dayOfWeek: integer               // 0=Sunday..6=Saturday
+  startTime: string                // "HH:mm", ignored by clients when isClosed is true
+  endTime: string                  // "HH:mm"
+  isClosed: boolean
+}
+
+HolidayDTO {
+  id: uuid
+  date: string                     // "YYYY-MM-DD"
+  reason: string
   createdAt: datetime
 }
 
@@ -659,6 +694,78 @@ TenantSettingsDTO {
 **Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `404 NOT_FOUND` (also returned for an invitation belonging to a different tenant).
 **Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (revoking an already-revoked/accepted invitation is a safe no-op, `200`).
 **Rate Limit:** Standard-Authenticated. **Idempotency:** Not required.
+
+---
+
+## 6a. Salon Endpoints
+
+**Added:** Milestone 4 (docs/adr/ADR-007-salon-management.md, docs/SALON_ARCHITECTURE.md). Tag: `Salon`. Base path: `/api/v1/salon`. Singular, unparameterized paths for `/salon` and `/salon/business-hours` — same "always the caller's resolved tenant" convention as Section 6's `/tenant` — plus `/salon/holidays[/:id]` for the one genuine multi-row sub-resource. `Tenant`'s own identity fields (`name`/`timezone`/`defaultLocale`/`addressLine1/2`/`city`/`countryCode`) are composed into these responses rather than duplicated — `PATCH /salon` writes them through the same underlying mechanism as `PATCH /tenant` (Section 6), not a second copy.
+
+#### `GET /salon`
+**Purpose:** Retrieve the caller's composed salon profile (Tenant identity fields + branding/contact/currency).
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`, `STAFF` (read-broad, same rationale as `GET /tenant`).
+**Success — 200 OK:** `{ "success": true, "data": SalonProfileDTO }` — auto-creates a default `SalonProfile` row on first read for a tenant that doesn't have one yet (mirrors `GET /tenant/settings`'s same backfill precedent).
+**Errors:** `401 UNAUTHORIZED`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** N/A.
+
+#### `PATCH /salon`
+**Purpose:** Update salon profile, contact info, currency, and branding in one call — spans both `Tenant`-owned fields and the new `SalonProfile`-owned fields.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `salon:manage`.
+**Request Body (all optional):** `{ "name": "...", "addressLine1": "...", "addressLine2": "...", "city": "...", "countryCode": "BR", "timezone": "America/Sao_Paulo", "defaultLocale": "pt", "description": "...", "contactEmail": "hello@salon.com", "contactPhone": "+15551234567", "website": "https://...", "currency": "USD", "logoUrl": "https://...", "primaryColor": "#4A90D9", "secondaryColor": "#F5A623" }`
+**Validation Rules:** `contactEmail` valid email; `contactPhone` valid E.164 (a real, assignable number — `libphonenumber-js`-validated, not merely pattern-matched); `website`/`logoUrl` valid URLs with protocol; `currency` valid ISO 4217 code; `primaryColor`/`secondaryColor` `#RRGGBB` hex; `timezone`/`countryCode` same rules as `PATCH /tenant`.
+**Success — 200 OK:** `{ "success": true, "data": SalonProfileDTO }`
+**Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `422 VALIDATION_ERROR`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (full-field PATCH semantics).
+**Implementation note (docs/SALON_ARCHITECTURE.md Section 3):** internally splits the request into the `Tenant`-owned subset (written via the same `TenantService.updateProfile` `PATCH /tenant` uses) and the `SalonProfile`-owned subset, both inside one database transaction — never a partially-applied update. May record two audit entries (`SALON_PROFILE_UPDATED` and, if any Tenant-owned field was included, `TENANT_PROFILE_UPDATED`) — a deliberate, documented consequence of reuse, not a duplicate bug.
+
+#### `GET /salon/business-hours`
+**Purpose:** Retrieve the salon's weekly business hours.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`, `STAFF`.
+**Success — 200 OK:** `{ "success": true, "data": BusinessHoursDayDTO[] }` — always exactly 7 entries (`dayOfWeek` 0–6); any day with no persisted row yet is filled in-memory as `{ isClosed: true }`, never written to the database by a `GET`.
+**Errors:** `401 UNAUTHORIZED`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** N/A.
+
+#### `PUT /salon/business-hours`
+**Purpose:** Replace the entire weekly business-hours schedule.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `salon:manage`.
+**Request Body:** `{ "days": BusinessHoursDayDTO[] }` — must contain exactly 7 entries, one per `dayOfWeek` (0–6), no duplicates or gaps.
+**Validation Rules:** each `startTime`/`endTime` `"HH:mm"` (required unless `isClosed: true`); `endTime` must be after `startTime` for every non-closed day; exactly 7 distinct `dayOfWeek` values covering 0–6 (cross-field rules enforced server-side, not just per-entry DTO validation).
+**Success — 200 OK:** `{ "success": true, "data": BusinessHoursDayDTO[] }`
+**Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `422 INVALID_BUSINESS_HOURS_SET`, `422 VALIDATION_ERROR`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (full-replace `PUT` semantics — a retry with the same body is safe).
+
+#### `GET /salon/holidays`
+**Purpose:** List the salon's configured holidays/closures.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`, `STAFF`.
+**Success — 200 OK:** `{ "success": true, "data": HolidayDTO[] }`, sorted by `date` ascending — no pagination (a handful of rows per tenant per year, same rationale as `GET /tenant/invitations`).
+**Errors:** `401 UNAUTHORIZED`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** N/A.
+
+#### `POST /salon/holidays`
+**Purpose:** Add a holiday/closure date.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `salon:manage`.
+**Request Body:** `{ "date": "2026-12-25", "reason": "Christmas Day" }`
+**Validation Rules:** `date` valid `"YYYY-MM-DD"`; `reason` required, 1–255 chars; no existing holiday for the same `(tenantId, date)`.
+**Success — 201 Created:** `{ "success": true, "data": HolidayDTO }`
+**Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `409 DUPLICATE_HOLIDAY_DATE`, `422 VALIDATION_ERROR`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (the duplicate-date constraint gives natural idempotency, same convention as `POST /tenant/invitations`).
+
+#### `PATCH /salon/holidays/:id`
+**Purpose:** Update a holiday's date or reason.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `salon:manage`.
+**Path Params:** `id`. **Request Body (at least one field):** `{ "date": "...", "reason": "..." }`.
+**Validation Rules:** same as `POST`; at least one field must be provided; changing `date` to one that collides with another holiday returns `409 DUPLICATE_HOLIDAY_DATE`.
+**Success — 200 OK:** `{ "success": true, "data": HolidayDTO }`
+**Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `404 NOT_FOUND` (also returned for a holiday belonging to a different tenant, never `403`), `409 DUPLICATE_HOLIDAY_DATE`, `422 VALIDATION_ERROR`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (PATCH semantics).
+
+#### `DELETE /salon/holidays/:id`
+**Purpose:** Remove a holiday/closure date.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `salon:manage`.
+**Path Params:** `id`.
+**Success — 200 OK:** `{ "success": true, "data": { "message": "Holiday deleted." } }`
+**Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `404 NOT_FOUND` (also returned for cross-tenant, never `403`).
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (hard delete — a retry against an already-deleted id returns `404`, a safe/expected outcome for a delete retry).
 
 ---
 
@@ -1178,13 +1285,13 @@ The `Idempotency-Key` header (Section 2.13) is modeled as a `components.paramete
 
 ### 18.1 Endpoint Coverage Summary
 
-65 endpoints across 13 domains, exactly matching the requested list: Authentication (9), Users (5), Tenant (4), Employees (5), Services (5), Customers (5), Appointments (8), WhatsApp (6), AI (5), Billing (5), Notifications (2), Dashboard (3), Admin (3). **As-built after Milestone 3 (docs/adr/ADR-006):** Authentication gained `POST /auth/accept-invitation` (10); Tenant gained `POST/GET/DELETE /tenant/invitations*` (7); Admin's original 3 became `GET /admin/tenants` + 2 lifecycle actions built, `GET /admin/users`/`GET /admin/system` still design-only (Section 16). Users' original 5 (staff CRUD) remain entirely unbuilt.
+65 endpoints across 13 domains, exactly matching the requested list: Authentication (9), Users (5), Tenant (4), Employees (5), Services (5), Customers (5), Appointments (8), WhatsApp (6), AI (5), Billing (5), Notifications (2), Dashboard (3), Admin (3). **As-built after Milestone 3 (docs/adr/ADR-006):** Authentication gained `POST /auth/accept-invitation` (10); Tenant gained `POST/GET/DELETE /tenant/invitations*` (7); Admin's original 3 became `GET /admin/tenants` + 2 lifecycle actions built, `GET /admin/users`/`GET /admin/system` still design-only (Section 16). Users' original 5 (staff CRUD) remain entirely unbuilt. **As-built after Milestone 4 (docs/adr/ADR-007-salon-management.md):** new `Salon` domain built — `GET/PATCH /salon`, `GET/PUT /salon/business-hours`, `GET/POST/PATCH/DELETE /salon/holidays[/:id]` (8 endpoints, Section 6a) — not part of this document's original 65-endpoint request, added per the requester's explicit Milestone 4 scope. Employees/Services/Customers remain entirely unbuilt as of Milestone 4 (deferred to the renumbered Milestone 5, docs/IMPLEMENTATION_ROADMAP.md).
 
 ### 18.2 Gaps Identified During This Design (Flagged, Not Silently Filled)
 
 These surfaced while designing the endpoints above and are called out explicitly rather than quietly resolved, since they affect scope the requesting stakeholder should confirm before implementation:
 
-1. **File upload.** `TenantDTO.logoUrl`, `Invoice.invoicePdfUrl`, and WhatsApp media all depend on a `File`/`Media` upload mechanism (PRISMA_SCHEMA.md Section 12), but no `POST /files` (pre-signed-URL issuance) endpoint was in the requested list. Needed before `PATCH /tenant`'s `logoFileId` field is usable end-to-end.
+1. **File upload.** `TenantDTO.logoUrl`, `Invoice.invoicePdfUrl`, and WhatsApp media all depend on a `File`/`Media` upload mechanism (PRISMA_SCHEMA.md Section 12), but no `POST /files` (pre-signed-URL issuance) endpoint was in the requested list. Needed before `PATCH /tenant`'s `logoFileId` field is usable end-to-end. **Partially addressed, Milestone 4:** `GET/PATCH /salon`'s own `logoUrl` (Section 6a, `SalonProfileDTO`) is a plain placeholder string the caller supplies directly — real upload/storage integration is still deferred to whichever future milestone builds `Files`/S3.
 2. **`ServiceCategory` CRUD.** `Service.categoryId` is settable, but no dedicated endpoint to create/list/manage categories themselves was requested — likely an oversight worth closing, since a Salon Owner needs some way to create a category before assigning services to it.
 3. **`TenantInvitation` acceptance.** `POST /users` creates an invitation (Section 5), but no endpoint for the invitee to *accept* it (typically `POST /auth/accept-invitation` or folded into `POST /auth/register`'s flow when an invitation token is present) was explicitly requested — required to close the staff-onboarding loop from PROJECT_REQUIREMENTS.md Section 14.1.
 4. **`AppointmentFeedback` submission.** PRISMA_SCHEMA.md Section 7 models post-visit feedback, but no endpoint to submit it was requested (likely delivered via a WhatsApp-conversational flow rather than a REST call from the customer, who has no account — worth confirming this is AI-tool-mediated only, with no dashboard-facing submission endpoint needed).

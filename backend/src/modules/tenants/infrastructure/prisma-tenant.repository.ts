@@ -29,8 +29,9 @@ export class PrismaTenantRepository implements TenantRepositoryPort {
   async updateProfile(
     id: string,
     input: UpdateTenantProfileInput,
+    tx?: Prisma.TransactionClient,
   ): Promise<TenantEntity> {
-    const row = await this.prisma.tenant.update({
+    const row = await (tx ?? this.prisma).tenant.update({
       where: { id },
       data: input,
     });

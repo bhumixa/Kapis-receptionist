@@ -38,9 +38,11 @@ This was surfaced and decided during the AUTH_SCHEMA_REVIEW.md approval step (Sp
 
 ## Future Evolution
 
-- Milestone 3, Sprint 3.1 adds `TenantSettings`, `TenantFeature`, and `Tenant`'s remaining scalar/relation fields (`logoFileId` deferred further still, to Milestone 4's `Files` module, per PRISMA_SCHEMA.md §14.2 step 8's documented circular-reference resolution) without altering anything this migration created.
+- Milestone 3, Sprint 3.1 adds `TenantSettings`, `TenantFeature`, and `Tenant`'s remaining scalar/relation fields (`logoFileId` deferred further still, to a `Files` module, per PRISMA_SCHEMA.md §14.2 step 8's documented circular-reference resolution) without altering anything this migration created.
 - Milestone 4 (`Employees`, `Customers`, `Files`) adds `User.employee`, `User.customerNotesAuthored`, `User.filesUploaded`, and `Tenant.employees`/`customers`/`files`, etc.
 - Milestone 6 (`WhatsApp`/`Conversations`) adds `User.assignedConversations`, `User.messagesSent`, `Tenant.whatsappAccount`/`conversations`.
 - Milestone 8 (`Billing`) adds `Tenant.subscription`/`invoices`/`payments`.
 - Milestone 9 (`Notifications`/`Admin`/audit) adds `User.auditLogs`/`activityLogs`/`notifications`/`apiKeysCreated`, `Tenant.auditLogs`/`activityLogs`/`notifications`/`apiKeys`.
 - None of the above require altering `User`, `Role`, or `Tenant`'s existing columns or constraints — only additive relation fields and their corresponding FK on the new model's side, the same low-risk pattern this ADR itself follows.
+
+**Amended, Milestone 4 (docs/adr/ADR-007-salon-management.md):** the "Milestone 4"/"Milestone 6"/"Milestone 8"/"Milestone 9" labels above are this document's original numbering, since superseded — Milestone 4 was rescoped to the salon business-profile domain only (`SalonProfile`/`BusinessHours`/`Holiday`, no `Employees`/`Customers`/`Files`), and every milestone previously numbered 5+ cascaded up by one (`Employees`/`Customers`/`Files` → Milestone 5, `WhatsApp` → Milestone 7, `Billing` → Milestone 9, `Notifications`/`Admin` → Milestone 10). The relation additions described above are otherwise unchanged, just attached to different milestone numbers.

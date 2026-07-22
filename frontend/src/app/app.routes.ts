@@ -57,6 +57,36 @@ export const routes: Routes = [
           ),
       },
       {
+        // No tenantActiveGuard here: salon reads are STAFF-broad and stay
+        // reachable for a suspended tenant, mirroring the backend's
+        // GET-vs-PATCH split (docs/SALON_ARCHITECTURE.md) — mutation
+        // buttons are gated in-page via PermissionService instead, with
+        // the server-side TenantActiveGuard as the real enforcement.
+        path: 'salon',
+        canActivate: [roleGuard],
+        data: { roles: ['STAFF'] },
+        loadComponent: () =>
+          import('./features/salon/pages/salon-profile-page/salon-profile-page').then(
+            (m) => m.SalonProfilePage,
+          ),
+      },
+      {
+        path: 'salon/business-hours',
+        canActivate: [roleGuard],
+        data: { roles: ['STAFF'] },
+        loadComponent: () =>
+          import('./features/salon/pages/business-hours-page/business-hours-page').then(
+            (m) => m.BusinessHoursPage,
+          ),
+      },
+      {
+        path: 'salon/holidays',
+        canActivate: [roleGuard],
+        data: { roles: ['STAFF'] },
+        loadComponent: () =>
+          import('./features/salon/pages/holidays-page/holidays-page').then((m) => m.HolidaysPage),
+      },
+      {
         // TenantActiveGuard's own redirect target (Section 3.3's exemption
         // pattern) — deliberately not itself gated by tenantActiveGuard, or
         // a suspended tenant could never reach the page explaining why.

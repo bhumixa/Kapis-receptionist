@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented in this file. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [Semantic Versioning](https://semver.org/) as defined in IMPLEMENTATION_ROADMAP.md Section 2.8 (platform release version, distinct from the API's own `/api/v1` URI versioning).
 
+## [Unreleased] — Milestone 4: Salon Management
+
+Full technical reference: [docs/SALON_ARCHITECTURE.md](docs/SALON_ARCHITECTURE.md), decision record: [docs/adr/ADR-007-salon-management.md](docs/adr/ADR-007-salon-management.md). Scope: the salon's own business profile, branding, business hours, and holiday management only — a narrower, differently-shaped charter than IMPLEMENTATION_ROADMAP.md's original "Salon Management" milestone, which bundled Employees/Services/Customers/Files; that catalog-data scope moves to a new, renumbered Milestone 5. Employees, Customers, Services, Scheduling, WhatsApp, AI, Billing, and Analytics remain explicitly out of scope.
+
+### Added
+- **Backend** (`Salon` module, new): `GET/PATCH /salon` (composed salon profile — business/contact info, description, currency, branding — merged with `Tenant`'s existing identity fields via `TenantService`, never duplicated); `GET/PUT /salon/business-hours` (always the full 7-day week, auto-defaulted to closed for missing days); `GET/POST/PATCH/DELETE /salon/holidays[/:id]` (tenant-wide closures, full CRUD).
+- **Database**: new `SalonProfile` (1:1 satellite table on `Tenant`, mirroring `TenantSettings`' precedent), `BusinessHours`, and `Holiday` models — field names/shapes match `PRISMA_SCHEMA.md`'s already-reserved, broader Employee/Branch-aware design, so a future milestone's migration only adds columns. No composite-FK cross-tenant pattern needed yet — all three tables reference `Tenant` directly.
+- **RBAC**: new `salon:manage` permission, granted to `OWNER`/`MANAGER`; reads are `STAFF`-broad (role-gated only), matching `GET/PATCH /tenant`'s existing read/write split.
+- **Frontend**: `salon` feature — `SalonProfilePage` (`/app/salon`), `BusinessHoursPage` (`/app/salon/business-hours`, a 7-row weekly editor), `HolidaysPage` (`/app/salon/holidays`, inline add/edit/delete, no modal needed); `SalonApiService`; a "Salon" nav link in `DashboardLayout`. `ApiClient` gained a `put<T>()` method (its first consumer).
+- **Testing**: 20 new backend unit tests (`SalonProfileService`, `BusinessHoursService`, `HolidayService`); 16 new backend integration tests (`test/integration/salon/`) covering cross-tenant isolation, role/permission enforcement, `TENANT_SUSPENDED` behavior, and CRUD validation for all three sub-resources — full existing regression suite (124 unit + 79 integration tests) re-verified green.
+- **Documentation**: new `docs/SALON_ARCHITECTURE.md`, `docs/adr/ADR-007-salon-management.md`; `docs/API_SPECIFICATION.md` (new Section 6a); `docs/DATABASE_DESIGN.md` (new `salon_profiles`/`business_hours` sections, `holidays` amended); `docs/IMPLEMENTATION_ROADMAP.md` re-scoped and renumbered (eleven milestones, 19 sprints); amendment notes added to `docs/TENANT_ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/adr/ADR-002`, `docs/adr/ADR-006`.
+
+### Changed
+- `TenantRepositoryPort.updateProfile` and `AuditLogService.record` both gained an optional trailing `tx?: Prisma.TransactionClient` parameter (every existing call site is unaffected) — lets `PATCH /salon` compose a Tenant-field write with a SalonProfile-field write in one atomic transaction.
+- `modules/auth`'s `TenantResponseDto.logoUrl` comment updated to note it's superseded by `GET /salon`'s own `logoUrl` — still `null`, unchanged behavior.
+
+### Known Limitations
+- Logo upload is a placeholder `logoUrl` string field — no `Files`/S3 module exists yet; real upload/storage integration is deferred to the renumbered Milestone 5.
+- `Holiday` is tenant-wide only (no `employeeId`) — the eventual per-employee variant requires a manual partial-unique-index migration (documented forward note in `docs/SALON_ARCHITECTURE.md`), not a naive column addition.
+- The composite-FK cross-tenant relation pattern remains dormant — none of this milestone's tables reference another tenant-owned entity; it becomes load-bearing starting the renumbered Milestone 5's `Employee`↔`Service` relation.
+
 ## [Unreleased] — Milestone 3: Multi-Tenant SaaS Engine
 
 Full technical reference: [docs/TENANT_ARCHITECTURE.md](docs/TENANT_ARCHITECTURE.md), decision record: [docs/adr/ADR-006-multi-tenant-saas-engine.md](docs/adr/ADR-006-multi-tenant-saas-engine.md). Scope: tenant infrastructure only — salon management, scheduling, WhatsApp, AI, and billing are explicitly out of scope.

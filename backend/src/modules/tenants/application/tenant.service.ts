@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { ActorType } from '@prisma/client';
+import { ActorType, Prisma } from '@prisma/client';
 import { AuditLogService } from '../../../core/audit/audit-log.service';
 import { AccessTokenPayload } from '../../auth/application/token.service';
 import { TenantEntity } from '../domain/entities/tenant.entity';
@@ -28,22 +28,33 @@ export class TenantService {
     return this.tenants.findById(tenantId).then(requireFound);
   }
 
+  /**
+   * Optional trailing `tx`: `modules/salon`'s `SalonProfileService` calls
+   * this from inside its own `PATCH /salon` transaction so the Tenant-owned
+   * subset of a combined salon-profile update commits atomically with the
+   * `SalonProfile` write (docs/adr/ADR-007-salon-management.md). Omitting
+   * `tx` (every pre-Milestone-4 call site) is unchanged.
+   */
   async updateProfile(
     tenantId: string,
     actor: AccessTokenPayload,
     input: UpdateTenantProfileInput,
+    tx?: Prisma.TransactionClient,
   ): Promise<TenantEntity> {
-    const updated = await this.tenants.updateProfile(tenantId, input);
+    const updated = await this.tenants.updateProfile(tenantId, input, tx);
 
-    await this.auditLog.record({
-      action: 'TENANT_PROFILE_UPDATED',
-      entityType: 'Tenant',
-      entityId: tenantId,
-      actorType: ActorType.USER,
-      actorId: actor.sub,
-      tenantId,
-      metadata: { fields: Object.keys(input) },
-    });
+    await this.auditLog.record(
+      {
+        action: 'TENANT_PROFILE_UPDATED',
+        entityType: 'Tenant',
+        entityId: tenantId,
+        actorType: ActorType.USER,
+        actorId: actor.sub,
+        tenantId,
+        metadata: { fields: Object.keys(input) },
+      },
+      tx,
+    );
 
     return updated;
   }

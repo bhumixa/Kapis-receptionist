@@ -37,8 +37,20 @@ export interface RecordAuditEventInput {
 export class AuditLogService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async record(input: RecordAuditEventInput): Promise<void> {
-    await this.prisma.auditLog.create({
+  /**
+   * Optional trailing `tx`: lets a caller that's already inside a
+   * `prisma.$transaction` (e.g. `modules/salon`'s `SalonProfileService`,
+   * docs/adr/ADR-007-salon-management.md) write its audit entry as part of
+   * the same atomic unit, so a later failure/rollback in that transaction
+   * can't leave a stale audit row behind claiming a change that never
+   * actually committed. Every existing call site omits `tx` and behaves
+   * exactly as before (writes immediately via the singleton client).
+   */
+  async record(
+    input: RecordAuditEventInput,
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    await (tx ?? this.prisma).auditLog.create({
       data: {
         tenantId: input.tenantId ?? null,
         action: input.action,

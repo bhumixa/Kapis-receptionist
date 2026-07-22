@@ -19,8 +19,16 @@ export const ROLE_PERMISSIONS: Record<RoleName, readonly string[]> = {
     'staff:invite',
     'tenant:manage',
     'settings:manage',
+    'salon:manage',
   ],
-  OWNER: ['billing:manage', 'account:delete', 'staff:invite', 'tenant:manage', 'settings:manage'],
-  MANAGER: ['staff:invite', 'tenant:manage', 'settings:manage'],
+  OWNER: [
+    'billing:manage',
+    'account:delete',
+    'staff:invite',
+    'tenant:manage',
+    'settings:manage',
+    'salon:manage',
+  ],
+  MANAGER: ['staff:invite', 'tenant:manage', 'settings:manage', 'salon:manage'],
   STAFF: [],
 };
