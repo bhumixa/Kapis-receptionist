@@ -1,15 +1,21 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { EMAIL_VERIFICATION_REPOSITORY } from './domain/ports/email-verification-repository.port';
+import { PASSWORD_RESET_REPOSITORY } from './domain/ports/password-reset-repository.port';
 import { REFRESH_TOKEN_REPOSITORY } from './domain/ports/refresh-token-repository.port';
 import { REGISTRATION_REPOSITORY } from './domain/ports/registration-repository.port';
 import { TENANT_REPOSITORY } from './domain/ports/tenant-repository.port';
 import { USER_REPOSITORY } from './domain/ports/user-repository.port';
 import { AuthService } from './application/auth.service';
+import { LoginAttemptService } from './application/login-attempt.service';
 import { PasswordService } from './application/password.service';
 import { SecurityEventService } from './application/security-event.service';
 import { SessionService } from './application/session.service';
 import { TokenService } from './application/token.service';
+import { PrismaEmailVerificationRepository } from './infrastructure/prisma-email-verification.repository';
+import { PrismaPasswordResetRepository } from './infrastructure/prisma-password-reset.repository';
 import { PrismaRefreshTokenRepository } from './infrastructure/prisma-refresh-token.repository';
 import { PrismaRegistrationRepository } from './infrastructure/prisma-registration.repository';
 import { PrismaTenantRepository } from './infrastructure/prisma-tenant.repository';
@@ -34,6 +40,7 @@ import {
       { name: THROTTLE_PUBLIC_SENSITIVE, ttl: 60_000, limit: 10 },
       { name: THROTTLE_STANDARD_AUTHENTICATED, ttl: 60_000, limit: 120 },
     ]),
+    NotificationsModule,
   ],
   controllers: [AuthController],
   providers: [
@@ -42,6 +49,7 @@ import {
     TokenService,
     SessionService,
     SecurityEventService,
+    LoginAttemptService,
     JwtAuthGuard,
     { provide: USER_REPOSITORY, useClass: PrismaUserRepository },
     { provide: TENANT_REPOSITORY, useClass: PrismaTenantRepository },
@@ -52,6 +60,14 @@ import {
     {
       provide: REGISTRATION_REPOSITORY,
       useClass: PrismaRegistrationRepository,
+    },
+    {
+      provide: EMAIL_VERIFICATION_REPOSITORY,
+      useClass: PrismaEmailVerificationRepository,
+    },
+    {
+      provide: PASSWORD_RESET_REPOSITORY,
+      useClass: PrismaPasswordResetRepository,
     },
   ],
   // TokenService/JwtAuthGuard exported for Milestone 3's RolesGuard/

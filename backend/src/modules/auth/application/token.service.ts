@@ -1,4 +1,4 @@
-import { randomBytes, createHmac } from 'node:crypto';
+import { randomBytes, createHash, createHmac } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -68,5 +68,25 @@ export class TokenService {
 
   refreshTokenTtlSeconds(): number {
     return this.configService.getOrThrow<number>('jwt.refreshExpiresInSeconds');
+  }
+
+  /**
+   * Generic opaque single-use token primitive, reused by both email
+   * verification and password reset (docs/AUTHENTICATION.md). 256 bits of
+   * entropy, URL-safe — sent to the client only via the emailed link, never
+   * persisted raw.
+   *
+   * Deliberately **not** peppered with `JWT_REFRESH_SECRET` like the refresh
+   * token: these tokens are short-lived and single-use (hours, not days),
+   * so a plain SHA-256 hash of the token is sufficient — reserving the HMAC
+   * pepper for the one credential (the refresh token) whose long lifetime
+   * and revocation/reuse-detection model actually needs a distinct secret.
+   */
+  generateOpaqueToken(): string {
+    return randomBytes(32).toString('base64url');
+  }
+
+  hashOpaqueToken(rawToken: string): string {
+    return createHash('sha256').update(rawToken).digest('hex');
   }
 }

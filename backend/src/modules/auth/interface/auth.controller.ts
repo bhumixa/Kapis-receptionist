@@ -23,8 +23,12 @@ import {
 import { AuthService } from '../application/auth.service';
 import { RequestMeta } from '../application/session.service';
 import { CurrentUser } from './decorators/current-user.decorator';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import {
   toTenantResponseDto,
@@ -50,6 +54,7 @@ export class AuthController {
     return {
       user: toUserResponseDto(user),
       tenant: toTenantResponseDto(tenant),
+      message: 'Verification email sent.',
     };
   }
 
@@ -121,6 +126,50 @@ export class AuthController {
       user: toUserResponseDto(user),
       tenant: tenant ? toTenantResponseDto(tenant) : null,
     };
+  }
+
+  @Post('verify-email')
+  @HttpCode(HttpStatus.OK)
+  @SkipThrottle({ [THROTTLE_STANDARD_AUTHENTICATED]: true })
+  @Throttle({ [THROTTLE_PUBLIC_SENSITIVE]: { limit: 10, ttl: 60_000 } })
+  async verifyEmail(@Body() dto: VerifyEmailDto) {
+    const { user } = await this.authService.verifyEmail(dto.token);
+    return { user: toUserResponseDto(user), message: 'Email verified.' };
+  }
+
+  @Post('resend-verification')
+  @HttpCode(HttpStatus.OK)
+  @SkipThrottle({ [THROTTLE_STANDARD_AUTHENTICATED]: true })
+  @Throttle({ [THROTTLE_PUBLIC_SENSITIVE]: { limit: 10, ttl: 60_000 } })
+  async resendVerification(@Body() dto: ResendVerificationDto) {
+    await this.authService.resendVerification(dto.email);
+    // Deliberately identical response whether or not the email exists or is
+    // already verified — enumeration-resistant, mirroring forgot-password.
+    return {
+      message:
+        'If an account exists for this email and is not yet verified, a verification link has been sent.',
+    };
+  }
+
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  @SkipThrottle({ [THROTTLE_STANDARD_AUTHENTICATED]: true })
+  @Throttle({ [THROTTLE_PUBLIC_SENSITIVE]: { limit: 10, ttl: 60_000 } })
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    await this.authService.forgotPassword(dto.email);
+    return {
+      message:
+        'If an account exists for this email, a reset link has been sent.',
+    };
+  }
+
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  @SkipThrottle({ [THROTTLE_STANDARD_AUTHENTICATED]: true })
+  @Throttle({ [THROTTLE_PUBLIC_SENSITIVE]: { limit: 10, ttl: 60_000 } })
+  async resetPassword(@Body() dto: ResetPasswordDto) {
+    await this.authService.resetPassword(dto.token, dto.newPassword);
+    return { message: 'Password updated. Please log in.' };
   }
 
   private requestMeta(request: Request): RequestMeta {

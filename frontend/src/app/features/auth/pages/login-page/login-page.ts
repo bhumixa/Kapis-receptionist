@@ -28,6 +28,9 @@ export class LoginPage {
   readonly isSubmitting = signal(false);
   readonly errorMessage = signal<string | null>(null);
   readonly justRegistered = this.route.snapshot.queryParamMap.get('registered') === 'true';
+  readonly justReset = this.route.snapshot.queryParamMap.get('reset') === 'true';
+  readonly showResendVerification = signal(false);
+  readonly resendSent = signal(false);
 
   readonly form = this.formBuilder.nonNullable.group({
     email: ['', [Validators.required, Validators.email]],
@@ -42,6 +45,8 @@ export class LoginPage {
 
     this.isSubmitting.set(true);
     this.errorMessage.set(null);
+    this.showResendVerification.set(false);
+    this.resendSent.set(false);
 
     this.authApi.login(this.form.getRawValue()).subscribe({
       next: ({ user, tenant, accessToken }) => {
@@ -51,8 +56,24 @@ export class LoginPage {
       },
       error: (error: unknown) => {
         this.isSubmitting.set(false);
+        if (error instanceof ApiError && error.code === 'EMAIL_NOT_VERIFIED') {
+          this.showResendVerification.set(true);
+        }
         this.errorMessage.set(this.messageFor(error));
       },
+    });
+  }
+
+  resendVerification(): void {
+    const email = this.form.controls.email.value;
+    if (!email) {
+      return;
+    }
+    this.authApi.resendVerification(email).subscribe({
+      next: () => this.resendSent.set(true),
+      // Enumeration-safe endpoint always succeeds; a network/5xx failure
+      // here isn't worth a distinct error state for this secondary action.
+      error: () => this.resendSent.set(true),
     });
   }
 
@@ -60,6 +81,9 @@ export class LoginPage {
     if (error instanceof ApiError) {
       if (error.code === 'INVALID_CREDENTIALS') {
         return 'Incorrect email or password.';
+      }
+      if (error.code === 'EMAIL_NOT_VERIFIED') {
+        return 'Please verify your email address before logging in.';
       }
       if (error.code === 'RATE_LIMITED') {
         return 'Too many attempts. Please wait a moment and try again.';

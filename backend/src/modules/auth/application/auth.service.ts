@@ -1,6 +1,16 @@
 import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { NotificationsService } from '../../notifications/application/notifications.service';
 import { AuthTenant } from '../domain/entities/auth-tenant.entity';
 import { AuthUser } from '../domain/entities/auth-user.entity';
+import {
+  EMAIL_VERIFICATION_REPOSITORY,
+  type EmailVerificationRepositoryPort,
+} from '../domain/ports/email-verification-repository.port';
+import {
+  PASSWORD_RESET_REPOSITORY,
+  type PasswordResetRepositoryPort,
+} from '../domain/ports/password-reset-repository.port';
 import {
   REGISTRATION_REPOSITORY,
   type RegistrationRepositoryPort,
@@ -15,9 +25,13 @@ import {
 } from '../domain/ports/user-repository.port';
 import {
   AccountDeactivatedException,
+  AccountLockedException,
   EmailAlreadyExistsException,
+  EmailNotVerifiedException,
   InvalidCredentialsException,
+  InvalidOrExpiredTokenException,
 } from './exceptions/auth.exceptions';
+import { LoginAttemptService } from './login-attempt.service';
 import { PasswordService } from './password.service';
 import { RequestMeta, SessionService } from './session.service';
 import { SecurityEventService } from './security-event.service';
@@ -53,9 +67,10 @@ export interface RefreshedSession {
 
 /**
  * The Auth module's public application service — orchestrates
- * PasswordService/TokenService/SessionService/SecurityEventService against
- * the repository ports. Controllers call only this; no business logic
- * lives in `interface/auth.controller.ts` (coding standards Section 12.5).
+ * PasswordService/TokenService/SessionService/SecurityEventService/
+ * LoginAttemptService/NotificationsService against the repository ports.
+ * Controllers call only this; no business logic lives in
+ * `interface/auth.controller.ts` (coding standards Section 12.5).
  */
 @Injectable()
 export class AuthService {
@@ -64,10 +79,17 @@ export class AuthService {
     @Inject(TENANT_REPOSITORY) private readonly tenants: TenantRepositoryPort,
     @Inject(REGISTRATION_REPOSITORY)
     private readonly registration: RegistrationRepositoryPort,
+    @Inject(EMAIL_VERIFICATION_REPOSITORY)
+    private readonly emailVerifications: EmailVerificationRepositoryPort,
+    @Inject(PASSWORD_RESET_REPOSITORY)
+    private readonly passwordResets: PasswordResetRepositoryPort,
     private readonly passwords: PasswordService,
     private readonly tokens: TokenService,
     private readonly sessions: SessionService,
     private readonly securityEvents: SecurityEventService,
+    private readonly loginAttempts: LoginAttemptService,
+    private readonly notifications: NotificationsService,
+    private readonly configService: ConfigService,
   ) {}
 
   async register(
@@ -97,6 +119,8 @@ export class AuthService {
       email: result.user.email,
     });
 
+    await this.issueAndSendVerificationEmail(result.user);
+
     return result;
   }
 
@@ -105,9 +129,17 @@ export class AuthService {
     meta: RequestMeta,
   ): Promise<AuthenticatedSession> {
     const email = normalizeEmail(input.email);
+
+    const lockout = await this.loginAttempts.getLockoutStatus(email);
+    if (lockout.locked) {
+      this.securityEvents.record('LOGIN_BLOCKED_LOCKED_OUT', { email });
+      throw new AccountLockedException(lockout.retryAfterSeconds);
+    }
+
     const user = await this.users.findByEmail(email);
 
     if (!user || !user.passwordHash) {
+      await this.loginAttempts.recordFailure(email);
       this.securityEvents.record('LOGIN_FAILURE', {
         email,
         reason: 'no_such_account',
@@ -120,6 +152,13 @@ export class AuthService {
       input.password,
     );
     if (!passwordValid) {
+      const result = await this.loginAttempts.recordFailure(email);
+      if (result.locked) {
+        this.securityEvents.record('ACCOUNT_LOCKED', {
+          userId: user.id,
+          email,
+        });
+      }
       this.securityEvents.record('LOGIN_FAILURE', {
         userId: user.id,
         email,
@@ -132,6 +171,11 @@ export class AuthService {
       throw new AccountDeactivatedException();
     }
 
+    if (!user.isEmailVerified) {
+      throw new EmailNotVerifiedException();
+    }
+
+    await this.loginAttempts.recordSuccess(email);
     await this.users.updateLastLoginAt(user.id, new Date());
 
     const tenant = user.tenantId
@@ -196,6 +240,138 @@ export class AuthService {
       : null;
 
     return { user, tenant };
+  }
+
+  /**
+   * Enumeration-safe by design (API_SPECIFICATION.md Section 4's
+   * `/auth/forgot-password` non-enumeration precedent, applied identically
+   * here): callers never learn whether the email exists or is already
+   * verified from this method's (lack of a) return value.
+   */
+  async resendVerification(email: string): Promise<void> {
+    const user = await this.users.findByEmail(normalizeEmail(email));
+    if (user && !user.isEmailVerified) {
+      await this.issueAndSendVerificationEmail(user);
+    }
+  }
+
+  async verifyEmail(rawToken: string): Promise<{ user: AuthUser }> {
+    const tokenHash = this.tokens.hashOpaqueToken(rawToken);
+    const record = await this.emailVerifications.findByHash(tokenHash);
+
+    if (
+      !record ||
+      record.verifiedAt ||
+      record.expiresAt.getTime() < Date.now()
+    ) {
+      throw new InvalidOrExpiredTokenException();
+    }
+
+    await this.emailVerifications.markVerified(record.id);
+    await this.users.markEmailVerified(record.userId);
+
+    const user = await this.users.findById(record.userId);
+    if (!user) {
+      throw new UnauthorizedException();
+    }
+
+    this.securityEvents.record('EMAIL_VERIFIED', { userId: user.id });
+
+    return { user: { ...user, isEmailVerified: true } };
+  }
+
+  /** Enumeration-safe (same rationale as `resendVerification`). */
+  async forgotPassword(email: string): Promise<void> {
+    const user = await this.users.findByEmail(normalizeEmail(email));
+    if (user) {
+      await this.issueAndSendPasswordResetEmail(user);
+    }
+  }
+
+  /**
+   * Validates the reset token, updates the password, and — per this
+   * sprint's explicit requirement — revokes every refresh token for the
+   * user (SYSTEM_ARCHITECTURE.md Section 7.6: "all active sessions/refresh
+   * tokens... invalidated on successful password reset").
+   */
+  async resetPassword(rawToken: string, newPassword: string): Promise<void> {
+    const tokenHash = this.tokens.hashOpaqueToken(rawToken);
+    const record = await this.passwordResets.findByHash(tokenHash);
+
+    if (!record || record.usedAt || record.expiresAt.getTime() < Date.now()) {
+      throw new InvalidOrExpiredTokenException();
+    }
+
+    const passwordHash = await this.passwords.hash(newPassword);
+    await this.users.updatePassword(record.userId, passwordHash);
+    await this.passwordResets.markUsed(record.id);
+    await this.sessions.revokeAllForUser(record.userId);
+
+    this.securityEvents.record('PASSWORD_RESET_SUCCESS', {
+      userId: record.userId,
+    });
+  }
+
+  private async issueAndSendVerificationEmail(user: AuthUser): Promise<void> {
+    await this.emailVerifications.invalidateActiveForUser(user.id);
+
+    const rawToken = this.tokens.generateOpaqueToken();
+    const expiresAt = new Date(
+      Date.now() +
+        this.configService.getOrThrow<number>(
+          'accountSecurity.emailVerificationExpiresInSeconds',
+        ) *
+          1000,
+    );
+    await this.emailVerifications.create({
+      userId: user.id,
+      tokenHash: this.tokens.hashOpaqueToken(rawToken),
+      expiresAt,
+    });
+
+    const verifyUrl = `${this.configService.getOrThrow<string>('mail.frontendUrl')}/auth/verify-email/${rawToken}`;
+    await this.notifications.sendEmail({
+      to: user.email,
+      subject: 'Verify your email address',
+      html: `<p>Welcome to Kapis Receptionist. Please verify your email address by clicking the link below:</p><p><a href="${verifyUrl}">${verifyUrl}</a></p><p>This link expires in 24 hours.</p>`,
+      text: `Verify your email address: ${verifyUrl} (expires in 24 hours)`,
+    });
+
+    this.securityEvents.record('EMAIL_VERIFICATION_SENT', {
+      userId: user.id,
+      email: user.email,
+    });
+  }
+
+  private async issueAndSendPasswordResetEmail(user: AuthUser): Promise<void> {
+    await this.passwordResets.invalidateActiveForUser(user.id);
+
+    const rawToken = this.tokens.generateOpaqueToken();
+    const expiresAt = new Date(
+      Date.now() +
+        this.configService.getOrThrow<number>(
+          'accountSecurity.passwordResetExpiresInSeconds',
+        ) *
+          1000,
+    );
+    await this.passwordResets.create({
+      userId: user.id,
+      tokenHash: this.tokens.hashOpaqueToken(rawToken),
+      expiresAt,
+    });
+
+    const resetUrl = `${this.configService.getOrThrow<string>('mail.frontendUrl')}/auth/reset-password/${rawToken}`;
+    await this.notifications.sendEmail({
+      to: user.email,
+      subject: 'Reset your password',
+      html: `<p>We received a request to reset your password. Click the link below to choose a new one:</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>This link expires in 1 hour. If you didn't request this, you can safely ignore this email.</p>`,
+      text: `Reset your password: ${resetUrl} (expires in 1 hour). If you didn't request this, ignore this email.`,
+    });
+
+    this.securityEvents.record('PASSWORD_RESET_REQUESTED', {
+      userId: user.id,
+      email: user.email,
+    });
   }
 }
 

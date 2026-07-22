@@ -40,6 +40,15 @@ export interface MeResponse {
   tenant: Tenant | null;
 }
 
+export interface VerifyEmailResponse {
+  user: User;
+  message: string;
+}
+
+export interface MessageResponse {
+  message: string;
+}
+
 /**
  * Thin, typed wrapper over `POST/GET /auth/*` (docs/API_SPECIFICATION.md
  * Section 4) — HTTP calls and request/response typing only, no state, no
@@ -69,5 +78,26 @@ export class AuthApiService {
 
   me(): Observable<MeResponse> {
     return this.api.get<MeResponse>('/auth/me');
+  }
+
+  verifyEmail(token: string): Observable<VerifyEmailResponse> {
+    return this.api.post<VerifyEmailResponse>('/auth/verify-email', { token });
+  }
+
+  resendVerification(email: string): Observable<MessageResponse> {
+    return this.api.post<MessageResponse>('/auth/resend-verification', {
+      email,
+    });
+  }
+
+  forgotPassword(email: string): Observable<MessageResponse> {
+    return this.api.post<MessageResponse>('/auth/forgot-password', { email });
+  }
+
+  resetPassword(token: string, newPassword: string): Observable<MessageResponse> {
+    return this.api.post<MessageResponse>('/auth/reset-password', {
+      token,
+      newPassword,
+    });
   }
 }

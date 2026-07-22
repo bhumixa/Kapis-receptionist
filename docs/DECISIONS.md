@@ -58,3 +58,13 @@ Adds the Identity migration batch (`User`, `UserRole`, `RefreshToken`, `EmailVer
 **Milestone:** 2 — Authentication ("Core Authentication" sprint)
 
 Implements Register, Login, Logout, Refresh, and Get Current User end to end (backend + frontend), on top of ADR-002's schema — deliberately excluding email verification, password reset, Google OAuth, and RBAC enforcement, a narrower and differently-shaped scope than IMPLEMENTATION_ROADMAP.md §4's Sprint 2.1/2.2 originally specified. Notable decisions: the refresh token is an opaque, HMAC-peppered credential rather than a JWT; reuse detection distinguishes a token revoked by rotation (theft signal, triggers an all-device revoke) from one revoked by plain logout (a harmless dead session) — a real bug found and fixed during this sprint's own verification pass; `SecurityEventService` logs structurally rather than writing to a new, not-yet-scheduled `AuditLog` table. Full context, alternatives considered, and consequences: [docs/adr/ADR-003-core-authentication.md](adr/ADR-003-core-authentication.md); full technical reference: [docs/AUTHENTICATION.md](AUTHENTICATION.md), [docs/AUTH_FLOW.md](AUTH_FLOW.md).
+
+---
+
+## ADR-004: Account Security (Sprint 2.3)
+
+**Status:** Accepted
+**Date:** 2026-07-22
+**Milestone:** 2 — Authentication, follow-up "Sprint 2.3"
+
+Closes the follow-up sprint ADR-003 itself recommended (minus Google OAuth/invitation-acceptance/Users CRUD, out of this sprint's charter): email verification, resend verification, password reset + confirmation, Redis-backed login-attempt tracking and temporary lockout, extended security event logging, and refresh-token revocation on password reset. Notable decisions: a minimal `Notifications` module (`sendEmail` only, SMTP with a log-only dev fallback) pulled forward from Milestone 9's full build-out; verification/reset tokens use a plain SHA-256 hash (not the refresh token's HMAC pepper, since they're short-lived and single-use); lockout state lives in Redis keyed by normalized email (never by user ID, to stay enumeration-resistant), not a new Postgres table; `EMAIL_NOT_VERIFIED` login enforcement — flagged in ADR-003 as a deferred gap — is now switched on. Full context, alternatives considered, and consequences: [docs/adr/ADR-004-account-security.md](adr/ADR-004-account-security.md).

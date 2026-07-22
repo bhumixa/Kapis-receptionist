@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [Semantic Versioning](https://semver.org/) as defined in IMPLEMENTATION_ROADMAP.md Section 2.8 (platform release version, distinct from the API's own `/api/v1` URI versioning).
 
+## [Unreleased] — Milestone 2: Authentication (Sprint 2.3 — Account Security)
+
+Full technical reference: [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) Section 6a, decision record: [docs/adr/ADR-004-account-security.md](docs/adr/ADR-004-account-security.md).
+
+### Added
+- **Backend** (`Auth` module): `POST /auth/verify-email`, `POST /auth/resend-verification`, `POST /auth/forgot-password`, `POST /auth/reset-password`.
+- **Notifications**: new minimal `Notifications` module (`NotificationsService.sendEmail`) — `nodemailer` over SMTP with a log-only fallback when `SMTP_HOST` is unset, keeping local dev/CI working with zero mail infrastructure.
+- **Security**: email verification (required to log in — `403 EMAIL_NOT_VERIFIED` now enforced) and password reset, both via single-use, SHA-256-hashed opaque tokens (`TokenService.generateOpaqueToken`/`hashOpaqueToken`); Redis-backed login-attempt tracking with temporary account lockout (5 failed attempts / 15-minute window → 15-minute lockout, `403 ACCOUNT_LOCKED`, new `LoginAttemptService`), keyed by normalized email to stay enumeration-resistant; password reset revokes every refresh token for the user (`SessionService.revokeAllForUser`, previously only used by reuse-detection); `SecurityEventService` extended with six new event types.
+- **Frontend**: new `verify-email-page`, `forgot-password-page`, `reset-password-page`; `login-page` gained a "Forgot password?" link, inline `EMAIL_NOT_VERIFIED` (with one-click resend) / `ACCOUNT_LOCKED` handling, and its post-register/post-reset banners now correctly reflect that a verification email is sent / that a password reset succeeded.
+- **Testing**: new backend unit tests (`LoginAttemptService`, `NotificationsService`, `TokenService`'s opaque-token helpers) and `AuthService` coverage for every new path (verify/resend/forgot/reset, lockout, unverified-login); new integration tests against a real Postgres/Redis for all four new endpoints plus a dedicated lockout spec; existing `login`/`test-app.factory` fixtures updated so pre-existing specs aren't broken by the new `EMAIL_NOT_VERIFIED` enforcement.
+
+### Changed
+- `POST /auth/register`'s response `message` reverts to `"Verification email sent."` (the original documented contract) now that an email is genuinely sent — see ADR-003's temporary substitution, now superseded.
+
+### Known Limitations
+- Google OAuth, invitation-acceptance, RBAC authorization enforcement, and the `Users`/`Tenants` modules as their own NestJS modules remain explicitly out of scope (unchanged from the Core Authentication sprint) — see ADR-004 for this sprint's precise boundary.
+- A CSRF double-submit token on `/auth/refresh` remains deferred, not implemented.
+
 ## [Unreleased] — Milestone 2: Authentication (Core Authentication)
 
 Full technical reference: [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md), sequence diagrams: [docs/AUTH_FLOW.md](docs/AUTH_FLOW.md), decision record: [docs/adr/ADR-003-core-authentication.md](docs/adr/ADR-003-core-authentication.md).

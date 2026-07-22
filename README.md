@@ -2,7 +2,7 @@
 
 AI-powered WhatsApp appointment booking SaaS for salons and beauty businesses — a multi-tenant platform where an AI receptionist answers customer questions, books/reschedules/cancels appointments, and hands off to staff when needed, all inside WhatsApp.
 
-**Status:** In development — Milestone 1 (Project Foundation) complete; Milestone 2 (Authentication) in progress — Core Authentication (Register/Login/Logout/Refresh/Get Current User, both stacks) done, see [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) and [docs/adr/ADR-003-core-authentication.md](docs/adr/ADR-003-core-authentication.md). See [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for the full milestone/sprint plan.
+**Status:** In development — Milestone 1 (Project Foundation) complete; Milestone 2 (Authentication) in progress — Core Authentication (Register/Login/Logout/Refresh/Get Current User) and Sprint 2.3 Account Security (email verification + resend, password reset, login-attempt tracking/lockout), both stacks, done — see [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md), [docs/adr/ADR-003-core-authentication.md](docs/adr/ADR-003-core-authentication.md), and [docs/adr/ADR-004-account-security.md](docs/adr/ADR-004-account-security.md). See [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for the full milestone/sprint plan.
 
 ## Documentation
 

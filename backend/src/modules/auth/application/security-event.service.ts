@@ -8,7 +8,14 @@ export type SecurityEventType =
   | 'LOGOUT'
   | 'REFRESH_SUCCESS'
   | 'REFRESH_FAILURE'
-  | 'REFRESH_TOKEN_REUSE_DETECTED';
+  | 'REFRESH_TOKEN_REUSE_DETECTED'
+  // Sprint 2.3 — Account Security (docs/AUTHENTICATION.md)
+  | 'EMAIL_VERIFICATION_SENT'
+  | 'EMAIL_VERIFIED'
+  | 'PASSWORD_RESET_REQUESTED'
+  | 'PASSWORD_RESET_SUCCESS'
+  | 'ACCOUNT_LOCKED'
+  | 'LOGIN_BLOCKED_LOCKED_OUT';
 
 export interface SecurityEventContext {
   userId?: string;
@@ -42,7 +49,9 @@ export class SecurityEventService {
     const isFailureOrThreat =
       type === 'LOGIN_FAILURE' ||
       type === 'REFRESH_FAILURE' ||
-      type === 'REFRESH_TOKEN_REUSE_DETECTED';
+      type === 'REFRESH_TOKEN_REUSE_DETECTED' ||
+      type === 'ACCOUNT_LOCKED' ||
+      type === 'LOGIN_BLOCKED_LOCKED_OUT';
 
     if (isFailureOrThreat) {
       this.logger.warn({ securityEvent: type, ...context }, type);

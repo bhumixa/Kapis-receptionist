@@ -256,7 +256,7 @@ Every flow below maps directly to its API_SPECIFICATION.md Section 4 endpoint; t
 
 ### 5.4 Verify Email
 
-`features/auth/pages/verify-email-page` — no form; reads `:token` from the route on page load, immediately calls `POST /auth/verify-email`, shows a success/failure state with a "Continue to Dashboard" CTA. Reachable whether or not the user currently has an active session (Section 3.2), since the link is delivered via email and may be opened on a different device/browser than the one currently logged in.
+`features/auth/pages/verify-email-page` — no form; reads `:token` from the route on page load, immediately calls `POST /auth/verify-email`, shows a success/failure state. Reachable whether or not the user currently has an active session (Section 3.2), since the link is delivered via email and may be opened on a different device/browser than the one currently logged in. **Implementation note (Sprint 2.3, docs/adr/ADR-004-account-security.md):** the success state's CTA is "Continue to log in" rather than "Continue to Dashboard" as originally documented — this page never establishes a session itself (no accessToken/tenant is returned by `/auth/verify-email`), so routing straight to `/app/dashboard` would assume a session that may not exist.
 
 ### 5.5 Google Login
 

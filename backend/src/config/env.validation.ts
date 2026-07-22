@@ -67,6 +67,55 @@ class EnvironmentVariables {
   @IsInt()
   @IsOptional()
   JWT_REFRESH_EXPIRES_IN_SECONDS: number = 60 * 60 * 24 * 30;
+
+  // --- Mail (docs/AUTHENTICATION.md — Sprint 2.3 Account Security) ---
+  // All optional: an unset SMTP_HOST means NotificationsService logs the
+  // email instead of sending it (local/CI-friendly, no mail infra required).
+  @IsString()
+  @IsOptional()
+  SMTP_HOST?: string;
+
+  @IsInt()
+  @IsOptional()
+  SMTP_PORT: number = 587;
+
+  @IsString()
+  @IsOptional()
+  SMTP_USER?: string;
+
+  @IsString()
+  @IsOptional()
+  SMTP_PASS?: string;
+
+  @IsString()
+  @IsOptional()
+  MAIL_FROM: string = 'no-reply@kapis-receptionist.example.com';
+
+  @IsString()
+  @IsOptional()
+  FRONTEND_URL: string = 'http://localhost:4200';
+
+  // --- Login attempt tracking / lockout ---
+  @IsInt()
+  @IsOptional()
+  LOGIN_ATTEMPT_MAX: number = 5;
+
+  @IsInt()
+  @IsOptional()
+  LOGIN_ATTEMPT_WINDOW_SECONDS: number = 900;
+
+  @IsInt()
+  @IsOptional()
+  LOGIN_LOCKOUT_SECONDS: number = 900;
+
+  // --- Email verification / password reset token lifetimes ---
+  @IsInt()
+  @IsOptional()
+  EMAIL_VERIFICATION_EXPIRES_IN_SECONDS: number = 60 * 60 * 24;
+
+  @IsInt()
+  @IsOptional()
+  PASSWORD_RESET_EXPIRES_IN_SECONDS: number = 60 * 60;
 }
 
 /**

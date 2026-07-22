@@ -3,9 +3,9 @@
 ## Core Authentication — Implementation Reference
 
 **Document Status:** As-Built
-**Milestone:** 2 — Authentication (Core Authentication sprint)
-**Depends on:** SYSTEM_ARCHITECTURE.md §7–9, PRISMA_SCHEMA.md §3, API_SPECIFICATION.md §4, FRONTEND_ARCHITECTURE.md §5, docs/adr/ADR-002-authentication-schema.md, docs/adr/ADR-003-core-authentication.md
-**Scope:** What was actually built this sprint — Register, Login, Logout, Refresh, Get Current User — and every security decision behind it. Email verification, password reset, Google OAuth, and RBAC authorization are explicitly **not** covered here; see "Out of Scope" below.
+**Milestone:** 2 — Authentication (Core Authentication sprint + Sprint 2.3 "Account Security" follow-up)
+**Depends on:** SYSTEM_ARCHITECTURE.md §7–9, PRISMA_SCHEMA.md §3, API_SPECIFICATION.md §4, FRONTEND_ARCHITECTURE.md §5, docs/adr/ADR-002-authentication-schema.md, docs/adr/ADR-003-core-authentication.md, docs/adr/ADR-004-account-security.md
+**Scope:** What was actually built across both sprints — Register, Login, Logout, Refresh, Get Current User, Email Verification, Resend Verification, Password Reset, Password Reset Confirmation, Login Attempt Tracking, Temporary Account Lockout — and every security decision behind it. Google OAuth and RBAC authorization are explicitly **not** covered here; see "Out of Scope" below.
 
 ---
 
@@ -18,8 +18,12 @@
 | `POST /api/v1/auth/logout` | Bearer JWT | Standard-Authenticated (120/min) |
 | `POST /api/v1/auth/refresh` | Refresh-token cookie | Standard-Authenticated (120/min, per-IP — see §5) |
 | `GET /api/v1/auth/me` | Bearer JWT | Standard-Authenticated (120/min) |
+| `POST /api/v1/auth/verify-email` | Public (token is the credential) | Public-Sensitive (10/min/IP) |
+| `POST /api/v1/auth/resend-verification` | Public | Public-Sensitive (10/min/IP) |
+| `POST /api/v1/auth/forgot-password` | Public | Public-Sensitive (10/min/IP) |
+| `POST /api/v1/auth/reset-password` | Public (token is the credential) | Public-Sensitive (10/min/IP) |
 
-Full request/response contracts: API_SPECIFICATION.md §4 (unchanged except the two amendments noted in §7 below).
+Full request/response contracts: API_SPECIFICATION.md §4 (unchanged except the amendments noted in §7 below and the new `resend-verification` endpoint documented there).
 
 ---
 
@@ -122,25 +126,57 @@ Exactly API_SPECIFICATION.md §2.10's documented tiers. One documented simplific
 
 ## 6. SecurityEventService
 
-Every register/login-success/login-failure/logout/refresh-success/refresh-failure/reuse-detected event is recorded as a structured, tagged log line (`SecurityEventService.record`), not written to a new database table. `AuditLog` is explicit Milestone 9 scope (PRISMA_SCHEMA.md §11); adding it now would be exactly the kind of forward-reference this project's incremental-migration discipline (ADR-001, ADR-002) exists to avoid. The event shape (`type`, `userId`, `tenantId`, `email`, `ipAddress`, `userAgent`, plus event-specific fields) is stable and designed to be trivially replayable into a real persisted table once Milestone 9 builds one.
+Every register/login-success/login-failure/logout/refresh-success/refresh-failure/reuse-detected event — plus, as of Sprint 2.3, email-verification-sent/email-verified/password-reset-requested/password-reset-success/account-locked/login-blocked-locked-out — is recorded as a structured, tagged log line (`SecurityEventService.record`), not written to a new database table. `AuditLog` is explicit Milestone 9 scope (PRISMA_SCHEMA.md §11); adding it now would be exactly the kind of forward-reference this project's incremental-migration discipline (ADR-001, ADR-002) exists to avoid. The event shape (`type`, `userId`, `tenantId`, `email`, `ipAddress`, `userAgent`, plus event-specific fields) is stable and designed to be trivially replayable into a real persisted table once Milestone 9 builds one.
+
+---
+
+## 6a. Account Security (Sprint 2.3, docs/adr/ADR-004-account-security.md)
+
+### 6a.1 Notifications Module
+
+A minimal `NotificationsService.sendEmail(to, subject, html, text)` (new `src/modules/notifications/` module) — `nodemailer` over SMTP, configured via `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASS`/`SMTP_SECURE`/`MAIL_FROM`. If `SMTP_HOST` is unset (local dev, CI), the email is logged via Pino instead of sent — every environment works without real mail infrastructure. This is the single capability SYSTEM_ARCHITECTURE.md §3.2's `Notifications` module documents as `sendEmail`; templated/logged notifications (`NotificationTemplate`, `NotificationLog`) remain Milestone 9 scope.
+
+### 6a.2 Verification / Reset Token Primitive
+
+`TokenService.generateOpaqueToken()` (32 random bytes, base64url) + `hashOpaqueToken()` (plain SHA-256, no pepper) — a second, deliberately simpler token scheme alongside the refresh token's HMAC-peppered one. These tokens are short-lived and single-use (hours, not the refresh token's 30 days), so they don't carry the same revocation/reuse-detection requirements that motivated a separate pepper secret for refresh tokens (§4.2). Shared by both email verification and password reset.
+
+### 6a.3 Email Verification / Resend
+
+- `POST /auth/register` now creates an `EmailVerification` row and sends a verification email (`{FRONTEND_URL}/auth/verify-email/{token}`); the response `message` is `"Verification email sent."` again — accurate now that this is true, reverting the Sprint 2 amendment noted in §7.
+- `POST /auth/verify-email` looks up the token by hash, checks `verifiedAt IS NULL` and `expiresAt > now()`, then sets `EmailVerification.verifiedAt` and `User.isEmailVerified = true`. Single-use, matching `PasswordReset`'s mechanics.
+- `POST /auth/resend-verification` — **new endpoint**, not in API_SPECIFICATION.md's original Section 4 (added as an amendment in this same change) — is enumeration-safe: an identical generic response whether the account doesn't exist, is already verified, or a fresh token was actually issued. A resend invalidates (hard-deletes) any prior unconsumed token for that user before issuing a new one.
+- `POST /auth/login` now enforces `403 EMAIL_NOT_VERIFIED` — closing the gap §7/§8 previously documented as deferred.
+
+### 6a.4 Password Reset / Reset Confirmation
+
+- `POST /auth/forgot-password` — already documented, now implemented — is enumeration-safe (unchanged contract). Issuing a new token hard-deletes any prior unconsumed one for that user.
+- `POST /auth/reset-password` validates the token (hash lookup, unused, unexpired), updates `User.passwordHash`, marks the token used, and — per this sprint's explicit requirement, matching SYSTEM_ARCHITECTURE.md §7.6 — calls `SessionService.revokeAllForUser`, revoking every refresh token/session for that user. This is the same all-device revoke mechanism reuse-detection already used (§4.5), now with a second caller.
+
+### 6a.5 Login Attempt Tracking & Temporary Lockout
+
+`LoginAttemptService` (new), Redis-backed (`RedisService`, already wired for the platform per SYSTEM_ARCHITECTURE.md §11.3) — no new Postgres table, since this state is rolling-window/ephemeral by nature (DATABASE_DESIGN.md §1.6).
+
+- Keyed by **normalized email**, not user ID — deliberately, so lockout behavior itself never reveals whether an account exists (the same enumeration-resistance principle already applied to `INVALID_CREDENTIALS`, extended here).
+- Defaults (env-configurable): 5 failed attempts within a 15-minute window (`LOGIN_ATTEMPT_MAX`/`LOGIN_ATTEMPT_WINDOW_SECONDS`) trigger a 15-minute lockout (`LOGIN_LOCKOUT_SECONDS`), returning `403 ACCOUNT_LOCKED` — a new error code, following the same pattern as the existing `403 ACCOUNT_DEACTIVATED`.
+- A failed attempt is recorded for `INVALID_CREDENTIALS` (unknown account or wrong password) only — **not** for a correct password against an unverified or deactivated account, since those aren't credential-guessing failures and shouldn't count toward lockout.
+- A successful login clears both the attempt counter and any lockout key for that email.
+- The lockout check runs before the user lookup, so a locked-out email is rejected without ever querying the database for that account.
 
 ---
 
 ## 7. Deviations from the Pre-Existing Documented Contract
 
-Two small, deliberate amendments to API_SPECIFICATION.md/FRONTEND_ARCHITECTURE.md, made because this sprint's scope (register/login/logout/refresh/me only — no email verification, no Notifications module) makes the originally-documented behavior impossible or misleading as written. Both are also applied as edits to those source documents in this same change, per IMPLEMENTATION_ROADMAP.md §8.1's living-document rule.
+**As of the Core Authentication sprint** (ADR-003), two small, deliberate amendments were made to API_SPECIFICATION.md/FRONTEND_ARCHITECTURE.md, because that sprint's narrower scope (register/login/logout/refresh/me only) made the originally-documented behavior impossible or misleading as written:
 
-1. **`POST /auth/register`'s response `message`** was documented as `"Verification email sent."`. No email is sent (email verification is out of scope this sprint, and the minimal-email-sending Notifications capability was never built for it). Changed to `"Account created. Please log in."` — accurate to what actually happens.
-2. **Register does not establish a session.** This was already the literal, documented contract (no `accessToken` in the success response) — but FRONTEND_ARCHITECTURE.md §5.2 additionally described redirecting straight into `/app/onboarding` post-register, which assumes both a session and an onboarding route that don't exist until later milestones. This sprint's frontend redirects to `/auth/login` with a `?registered=true` banner instead.
+1. **`POST /auth/register`'s response `message`** was documented as `"Verification email sent."`. No email was sent that sprint, so it was changed to `"Account created. Please log in."`. **As of Sprint 2.3, this reverts**: a verification email is genuinely sent now, so the response `message` is `"Verification email sent."` again, matching the original documented contract.
+2. **Register does not establish a session.** Unchanged by Sprint 2.3 — this was already the literal, documented contract (no `accessToken` in the success response), and still holds (`/app/onboarding` remains Milestone 3 scope). The frontend still redirects to `/auth/login` with a `?registered=true` banner; the banner copy now mentions checking email for the verification link, since that's accurate again.
 
-**Login does not enforce `403 EMAIL_NOT_VERIFIED`.** No email verification flow exists to ever clear that flag, so gating login on it would permanently lock out every registered user. `User.isEmailVerified` still defaults to `false` and is stored accurately — it's just not read by the login check yet. This is a known, temporary gap to close when the email-verification sprint lands (not a document amendment, since API_SPECIFICATION.md's `403 EMAIL_NOT_VERIFIED` entry remains the eventual target behavior, just not implemented yet).
+**As of Sprint 2.3, login now enforces `403 EMAIL_NOT_VERIFIED`** (§6a.3) — the gap the Core Authentication sprint left open (previously documented in this section as "a known, temporary gap") is closed.
 
 ---
 
 ## 8. Explicitly Out of Scope (Deferred, Not Forgotten)
 
-- **Email verification** — `verify-email` endpoint, verification email sending.
-- **Password reset** — `forgot-password`/`reset-password` endpoints.
 - **Google OAuth** — `POST /auth/google` and the frontend callback route.
 - **RBAC authorization enforcement** — `RolesGuard`/`PermissionGuard`/`TenantScopedGuard` (Milestone 3, SYSTEM_ARCHITECTURE.md §7.3–7.4). `User.roles` is populated and carried in the JWT this sprint, but nothing yet *checks* it — every authenticated user can currently reach every authenticated endpoint regardless of role, exactly as `@nestjs/throttler`-guarded-but-not-role-guarded implies. This is safe only because no role-sensitive endpoints exist yet in this sprint's scope.
 - **CSRF double-submit token** on `/auth/refresh` (SYSTEM_ARCHITECTURE.md §9.10) — deferred; `SameSite=Strict` + `HttpOnly` is the implemented primary control.
@@ -162,6 +198,16 @@ Added to `backend/.env.example` (see file for the full block):
 
 Both secrets are validated at bootstrap (`env.validation.ts`) — a missing or too-short secret fails fast at startup, not on first request (SYSTEM_ARCHITECTURE.md §10.6).
 
+**Sprint 2.3 additions** (all optional, sensible defaults — see `.env.example`):
+
+| Variable | Purpose |
+|---|---|
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_SECURE` | SMTP transport for `NotificationsService`. Unset `SMTP_HOST` → emails are logged, not sent (dev/CI-friendly). |
+| `MAIL_FROM` | `From` address for outbound email. |
+| `FRONTEND_URL` | Base URL used to build verification/reset links (`{FRONTEND_URL}/auth/verify-email/{token}`, etc). |
+| `LOGIN_ATTEMPT_MAX` / `LOGIN_ATTEMPT_WINDOW_SECONDS` / `LOGIN_LOCKOUT_SECONDS` | Login-attempt-tracking thresholds (defaults: 5 attempts / 900s window / 900s lockout). |
+| `EMAIL_VERIFICATION_EXPIRES_IN_SECONDS` / `PASSWORD_RESET_EXPIRES_IN_SECONDS` | Token lifetimes (defaults: 86400 / 3600). |
+
 ---
 
 ## 10. Frontend Architecture Summary
@@ -174,6 +220,7 @@ Per FRONTEND_ARCHITECTURE.md §5, implemented this sprint:
 - `core/interceptors/auth.interceptor.ts` — attaches the bearer token, retries once through a coordinated refresh on `401`, redirects to `/auth/login` with `returnUrl` on refresh failure.
 - `core/guards/auth.guard.ts` / `guest-only.guard.ts` — functional guards reading `AuthStateService` signals only, never making their own API call.
 - `features/auth/pages/{login-page,register-page}` — Reactive Forms, client-side validation mirroring the server's rules, inline error handling keyed off `ApiError.code`.
+- `features/auth/pages/{verify-email-page,forgot-password-page,reset-password-page}` (Sprint 2.3) — `verify-email-page` reads `:token` on load with no form and no guard (FRONTEND_ARCHITECTURE.md §5.4); `forgot-password-page`/`reset-password-page` mirror login/register's form conventions and are `guestOnlyGuard`-protected. `login-page` gained a "Forgot password?" link and inline `EMAIL_NOT_VERIFIED`/`ACCOUNT_LOCKED` handling, including a one-click resend-verification action.
 - `layouts/auth-layout`, `layouts/dashboard-layout` — the latter deliberately minimal this sprint (header identity + logout only); the full sidebar/nav chrome (FRONTEND_ARCHITECTURE.md §4.2) is built out once Milestone 3+ gives it real destinations.
 
 Not built this sprint (per FRONTEND_ARCHITECTURE.md's own component-library note): the shared `Button`/`Input` primitive component library (§7) — the auth forms use plain, accessible native HTML elements styled directly with Tailwind. That library is a larger, separate design-system undertaking; building it wasn't required to ship a working, accessible auth UI, and every future feature is free to introduce it without this sprint's pages needing rework beyond a styling pass.
@@ -182,4 +229,4 @@ Not built this sprint (per FRONTEND_ARCHITECTURE.md's own component-library note
 
 ## 11. Files
 
-See docs/adr/ADR-003-core-authentication.md for the full file manifest and the sprint-scope rationale.
+See docs/adr/ADR-003-core-authentication.md for the Core Authentication sprint's file manifest, and docs/adr/ADR-004-account-security.md for Sprint 2.3's — both include the sprint-scope rationale.

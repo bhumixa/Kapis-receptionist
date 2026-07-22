@@ -433,7 +433,7 @@ Tag: `Auth`. Base path: `/api/v1/auth`.
 **Errors:** `409 EMAIL_ALREADY_EXISTS`, `422 VALIDATION_ERROR` (+ global set, Section 2.3.1).
 **Rate Limit:** Public-Sensitive. **Idempotency:** Not required (naturally idempotent via `email` uniqueness, Section 2.13).
 **Example:** `curl -X POST /api/v1/auth/register -d '{...above...}'` → `201` with the body shown above.
-**Implementation note (Milestone 2 Core Authentication sprint, docs/adr/ADR-003-core-authentication.md):** as of this sprint, only `Tenant` + `User` (`OWNER`) + `UserRole` are created — `TenantSettings` and the default trial `Subscription` don't exist as tables yet (Milestone 3/8) and are not created here. The `message` was originally `"Verification email sent."`; changed because no verification email is sent this sprint (email verification is out of scope, docs/AUTHENTICATION.md Section 8). This note should be removed once Milestone 3 wires up the full atomic `Tenant`+`Owner`+`TenantSettings`+`Subscription` transaction IMPLEMENTATION_ROADMAP.md Sprint 3.1 specifies, at which point the original documented behavior above the note becomes accurate again.
+**Implementation note (Milestone 2 Core Authentication sprint, docs/adr/ADR-003-core-authentication.md; updated Sprint 2.3, docs/adr/ADR-004-account-security.md):** as of the Core Authentication sprint, only `Tenant` + `User` (`OWNER`) + `UserRole` are created — `TenantSettings` and the default trial `Subscription` don't exist as tables yet (Milestone 3/8) and are not created here; this part of the note remains accurate and should be removed once Milestone 3 wires up the full atomic `Tenant`+`Owner`+`TenantSettings`+`Subscription` transaction IMPLEMENTATION_ROADMAP.md Sprint 3.1 specifies. **As of Sprint 2.3, the `message` is `"Verification email sent."` again** (matching the original documented contract above) — a verification email is genuinely sent now (docs/AUTHENTICATION.md Section 6a.3), so the Core Authentication sprint's temporary substitution of `"Account created. Please log in."` no longer applies.
 
 #### `POST /auth/login`
 **Purpose:** Authenticate with email/password and establish a session.
@@ -442,7 +442,7 @@ Tag: `Auth`. Base path: `/api/v1/auth`.
 **Request Body:** `{ "email": "owner@salon.com", "password": "Str0ngP@ss!" }`
 **Validation Rules:** both fields required.
 **Success — 200 OK:** `{ "success": true, "data": { "user": UserDTO, "tenant": TenantDTO, "accessToken": "<jwt>", "expiresIn": 900 } }` — a `Set-Cookie` response header additionally sets the httpOnly refresh-token cookie (Section 2.14); the refresh token itself never appears in the JSON body.
-**Errors:** `401 INVALID_CREDENTIALS`, `403 EMAIL_NOT_VERIFIED`, `403 ACCOUNT_DEACTIVATED`.
+**Errors:** `401 INVALID_CREDENTIALS`, `403 EMAIL_NOT_VERIFIED`, `403 ACCOUNT_DEACTIVATED`, `403 ACCOUNT_LOCKED` (5 failed attempts within 15 minutes triggers a 15-minute temporary lockout, tracked in Redis keyed by normalized email — docs/AUTHENTICATION.md Section 6a.5).
 **Rate Limit:** Public-Sensitive (deliberately strict — this is the primary brute-force target, SYSTEM_ARCHITECTURE.md 9.2). **Idempotency:** Not required (read-like in effect; each call issues a new independent session, which is correct, not a duplication concern).
 **Example Response (200):** as above.
 
@@ -489,6 +489,16 @@ Tag: `Auth`. Base path: `/api/v1/auth`.
 **Success — 200 OK:** `{ "success": true, "data": { "user": UserDTO }, "message": "Email verified." }`
 **Errors:** `400 INVALID_OR_EXPIRED_TOKEN`.
 **Rate Limit:** Public-Sensitive. **Idempotency:** Not required (single-use token, same rationale as above).
+
+#### `POST /auth/resend-verification`
+**Added:** Sprint 2.3 (docs/adr/ADR-004-account-security.md) — not part of this document's original Section 4 endpoint set; added here as a living-document amendment per IMPLEMENTATION_ROADMAP.md Section 8.1's policy.
+**Purpose:** Re-send the email verification link (SYSTEM_ARCHITECTURE.md 7.7) — for a user who lost the original email or whose link expired.
+**Auth:** Public. **Authorization:** None.
+**Request Body:** `{ "email": "owner@salon.com" }`
+**Validation Rules:** `email` valid format.
+**Success — 200 OK:** `{ "success": true, "data": {}, "message": "If an account exists for this email and is not yet verified, a verification link has been sent." }` — **deliberately identical response** whether the account doesn't exist, is already verified, or a fresh token was actually issued (enumeration-resistant, mirroring `/auth/forgot-password`'s non-enumeration contract).
+**Errors:** `422 VALIDATION_ERROR` only (no `404`/distinguishing code — see above).
+**Rate Limit:** Public-Sensitive. **Idempotency:** Not required (each call issuing a fresh token — and invalidating the prior one — is correct behavior).
 
 #### `POST /auth/google`
 **Purpose:** Complete the Google OAuth 2.0 authorization-code exchange and establish a session (SYSTEM_ARCHITECTURE.md 7.5).

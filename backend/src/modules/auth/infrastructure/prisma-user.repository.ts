@@ -33,4 +33,18 @@ export class PrismaUserRepository implements UserRepositoryPort {
       data: { lastLoginAt: when },
     });
   }
+
+  async markEmailVerified(id: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id },
+      data: { isEmailVerified: true },
+    });
+  }
+
+  async updatePassword(id: string, passwordHash: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id },
+      data: { passwordHash },
+    });
+  }
 }

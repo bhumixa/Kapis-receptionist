@@ -93,4 +93,46 @@ describe('TokenService', () => {
     const raw = 'a-fixed-raw-token-value-for-this-test';
     expect(service.hashRefreshToken(raw)).not.toContain(raw);
   });
+
+  describe('generic opaque token (email verification / password reset)', () => {
+    it('generates high-entropy, unique tokens', () => {
+      const service = buildTokenService();
+      const a = service.generateOpaqueToken();
+      const b = service.generateOpaqueToken();
+
+      expect(a).not.toEqual(b);
+      // 32 random bytes, base64url-encoded.
+      expect(a.length).toBeGreaterThanOrEqual(40);
+      expect(a).toMatch(/^[A-Za-z0-9_-]+$/);
+    });
+
+    it('hashes deterministically, with no pepper/secret dependency', () => {
+      const service = buildTokenService();
+      const raw = service.generateOpaqueToken();
+
+      expect(service.hashOpaqueToken(raw)).toEqual(
+        service.hashOpaqueToken(raw),
+      );
+    });
+
+    it('produces the same hash regardless of the configured refresh pepper (deliberately unpeppered, unlike the refresh token)', () => {
+      const raw = 'a-fixed-raw-token-value-for-this-test';
+      const serviceA = buildTokenService({
+        'jwt.refreshPepper': 'pepper-A-pepper-A-pepper-A-pepper-A',
+      });
+      const serviceB = buildTokenService({
+        'jwt.refreshPepper': 'pepper-B-pepper-B-pepper-B-pepper-B',
+      });
+
+      expect(serviceA.hashOpaqueToken(raw)).toEqual(
+        serviceB.hashOpaqueToken(raw),
+      );
+    });
+
+    it('never leaks the raw token into its own hash', () => {
+      const service = buildTokenService();
+      const raw = 'a-fixed-raw-token-value-for-this-test';
+      expect(service.hashOpaqueToken(raw)).not.toContain(raw);
+    });
+  });
 });

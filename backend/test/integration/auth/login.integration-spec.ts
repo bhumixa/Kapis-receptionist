@@ -83,4 +83,19 @@ describe('POST /api/v1/auth/login (integration)', () => {
       .expect(401);
     expect(response.body.error.code).toBe('ACCOUNT_DEACTIVATED');
   });
+
+  it('rejects an unverified account with 403 EMAIL_NOT_VERIFIED, without counting it as a failed attempt', async () => {
+    const owner = await seedOwner(app, 'login-unverified');
+    createdTenantIds.push(owner.tenantId);
+    await prisma.user.update({
+      where: { id: owner.userId },
+      data: { isEmailVerified: false },
+    });
+
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email: owner.email, password: owner.password })
+      .expect(403);
+    expect(response.body.error.code).toBe('EMAIL_NOT_VERIFIED');
+  });
 });

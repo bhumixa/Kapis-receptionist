@@ -33,3 +33,50 @@ export const jwtConfig = registerAs('jwt', () => ({
     10,
   ),
 }));
+
+/**
+ * Minimal SMTP transport for the Notifications module (SYSTEM_ARCHITECTURE.md
+ * Section 3.2's `Notifications` module, pulled forward from Milestone 9's
+ * full build-out to the single `sendEmail` capability this sprint's
+ * verification/reset flows need). If `SMTP_HOST` is unset, `NotificationsService`
+ * logs the email instead of sending it — keeps local/CI environments working
+ * with zero mail infrastructure.
+ */
+export const mailConfig = registerAs('mail', () => ({
+  smtpHost: process.env.SMTP_HOST || null,
+  smtpPort: parseInt(process.env.SMTP_PORT ?? '587', 10),
+  smtpUser: process.env.SMTP_USER || null,
+  smtpPass: process.env.SMTP_PASS || null,
+  smtpSecure: process.env.SMTP_SECURE === 'true',
+  fromAddress:
+    process.env.MAIL_FROM ?? 'no-reply@kapis-receptionist.example.com',
+  frontendUrl: process.env.FRONTEND_URL ?? 'http://localhost:4200',
+}));
+
+/**
+ * Login-attempt tracking / temporary lockout (docs/AUTHENTICATION.md's
+ * Sprint 2.3 "Account Security" addition) — Redis-backed, ephemeral by
+ * design (DATABASE_DESIGN.md Section 1.6), keyed by normalized email so
+ * lockout behavior itself never distinguishes an existing account from a
+ * nonexistent one.
+ */
+export const loginSecurityConfig = registerAs('loginSecurity', () => ({
+  maxAttempts: parseInt(process.env.LOGIN_ATTEMPT_MAX ?? '5', 10),
+  attemptWindowSeconds: parseInt(
+    process.env.LOGIN_ATTEMPT_WINDOW_SECONDS ?? '900',
+    10,
+  ),
+  lockoutSeconds: parseInt(process.env.LOGIN_LOCKOUT_SECONDS ?? '900', 10),
+}));
+
+/** Email verification / password reset token lifetimes. */
+export const accountSecurityConfig = registerAs('accountSecurity', () => ({
+  emailVerificationExpiresInSeconds: parseInt(
+    process.env.EMAIL_VERIFICATION_EXPIRES_IN_SECONDS ?? `${60 * 60 * 24}`,
+    10,
+  ),
+  passwordResetExpiresInSeconds: parseInt(
+    process.env.PASSWORD_RESET_EXPIRES_IN_SECONDS ?? `${60 * 60}`,
+    10,
+  ),
+}));

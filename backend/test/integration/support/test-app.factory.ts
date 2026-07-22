@@ -98,6 +98,12 @@ export async function seedOwner(
       passwordHash: await passwordService.hash(password),
       firstName: 'Seed',
       lastName: 'Owner',
+      // This helper bypasses `POST /auth/register` entirely (see doc
+      // comment above) specifically so other endpoints' specs (login,
+      // logout, refresh, me) don't implicitly depend on register's
+      // behavior — that includes email verification, so the seeded owner
+      // is created pre-verified.
+      isEmailVerified: true,
       roles: { create: { roleId: ownerRole.id } },
     },
   });
