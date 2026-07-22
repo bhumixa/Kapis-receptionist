@@ -308,8 +308,10 @@ TenantSettingsDTO {
   notificationPreferences: object
 }
 
+// Built Milestone 5 (docs/adr/ADR-008-workforce-and-service-catalog.md) — as-built shape, superseding the earlier design-stage sketch.
 EmployeeDTO {
   id: uuid
+  userId: uuid | null            // optional link to a login User
   firstName: string
   lastName: string
   phoneNumber: string | null
@@ -318,19 +320,48 @@ EmployeeDTO {
   bio: string | null
   serviceIds: uuid[]             // from EmployeeService
   createdAt: datetime
+  updatedAt: datetime
 }
 
+WorkingHoursEntryDTO {
+  dayOfWeek: integer             // 0=Sunday..6=Saturday
+  startTime: string              // "HH:mm"
+  endTime: string                // "HH:mm"
+  isActive: boolean
+}
+
+TimeOffDTO {
+  id: uuid
+  startDate: string               // "YYYY-MM-DD"
+  endDate: string                 // "YYYY-MM-DD"
+  reason: string | null
+  createdAt: datetime
+}
+
+ServiceCategoryDTO {
+  id: uuid
+  name: string
+  displayOrder: integer
+  createdAt: datetime
+  updatedAt: datetime
+}
+
+// Built Milestone 5 — as-built shape, superseding the earlier design-stage sketch.
+// No `categoryName`/`eligibleEmployeeIds` fields (docs/adr/ADR-008 decision #2) —
+// eligible employees are read via `GET /employees?filter[serviceId]=` instead.
 ServiceDTO {
   id: uuid
   categoryId: uuid | null
-  categoryName: string | null
   name: string
   description: string | null
   durationMinutes: integer
   priceCents: integer
   currency: string
+  bufferTimeMinutes: integer      // new, Milestone 5 — per-service cleanup/prep buffer
   isActive: boolean
-  eligibleEmployeeIds: uuid[]
+  displayOrder: integer
+  createdAt: datetime
+  updatedAt: datetime
 }
 
 CustomerDTO {
@@ -771,7 +802,7 @@ TenantSettingsDTO {
 
 ## 7. Employees Endpoints
 
-Tag: `Employees`. Base path: `/api/v1/employees`. Tenant-scoped.
+**Built:** Milestone 5 (docs/adr/ADR-008-workforce-and-service-catalog.md, docs/WORKFORCE_ARCHITECTURE.md). Tag: `Employees`. Base path: `/api/v1/employees`. Tenant-scoped.
 
 #### `GET /employees`
 **Purpose:** List schedulable staff resources (FR-4, DATABASE_DESIGN.md 3.3.1).
@@ -782,7 +813,7 @@ Tag: `Employees`. Base path: `/api/v1/employees`. Tenant-scoped.
 **Rate Limit:** Standard-Authenticated. **Idempotency:** N/A.
 
 #### `GET /employees/:id`
-**Purpose:** Retrieve a single employee's detail, including working-hours summary.
+**Purpose:** Retrieve a single employee's detail, including its `serviceIds` eligibility list.
 **Auth:** Required. **Authorization:** `OWNER`, `MANAGER`, `STAFF`.
 **Path Params:** `id` (uuid).
 **Success — 200 OK:** `{ "success": true, "data": EmployeeDTO }`
@@ -791,39 +822,89 @@ Tag: `Employees`. Base path: `/api/v1/employees`. Tenant-scoped.
 
 #### `POST /employees`
 **Purpose:** Add a new staff resource.
-**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`.
-**Request Body:** `{ "firstName": "Ana", "lastName": "Silva", "phoneNumber": "+5511999999999", "colorTag": "#4F46E5", "bio": "...", "serviceIds": ["uuid1","uuid2"], "userId": "uuid | null" }`
-**Validation Rules:** `firstName`/`lastName` required; `phoneNumber` E.164 format if present; every `serviceIds[]` entry must reference a `Service` in the caller's own tenant (cross-tenant reference returns `422 VALIDATION_ERROR`, not `404`, since it's a body-field validation failure, not a missing-resource lookup); `userId` if present must be an existing `User` in the same tenant not already linked to another `Employee` (`Employee.userId` unique, PRISMA_SCHEMA.md 5).
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `employees:manage`.
+**Request Body:** `{ "firstName": "Ana", "lastName": "Silva", "phoneNumber": "+5511999999999", "colorTag": "#4F46E5", "bio": "...", "serviceIds": ["uuid1","uuid2"], "userId": "uuid" }` — all fields optional except `firstName`/`lastName`.
+**Validation Rules:** `firstName`/`lastName` required; `phoneNumber` E.164 format if present; every `serviceIds[]` entry must reference a `Service` in the caller's own tenant (`422 INVALID_SERVICE_REFERENCE`, listing the offending ids); `userId` if present must be an existing `User` in the same tenant (`422 INVALID_USER_REFERENCE`) not already linked to another `Employee` (`409 USER_ALREADY_LINKED`, `Employee.userId` unique).
 **Success — 201 Created:** `{ "success": true, "data": EmployeeDTO }`
-**Errors:** `403 PLAN_STAFF_LIMIT_EXCEEDED`, `402 TENANT_SUSPENDED`, `422 VALIDATION_ERROR`.
-**Rate Limit:** Standard-Authenticated. **Idempotency:** Recommended via `Idempotency-Key` (optional, not in the required list of Section 2.13, since duplicate employee creation is a low-severity, staff-visible-and-correctable mistake rather than a customer-facing financial/booking error — the required list is reserved for higher-stakes operations).
-**Example Response (201):** `{ "success": true, "data": { "id": "...", "firstName": "Ana", ..., "serviceIds": ["uuid1","uuid2"] } }`
+**Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `409 USER_ALREADY_LINKED`, `422 VALIDATION_ERROR`, `422 INVALID_SERVICE_REFERENCE`, `422 INVALID_USER_REFERENCE`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (low-severity, staff-visible-and-correctable mistake if duplicated).
 
 #### `PATCH /employees/:id`
-**Purpose:** Update an employee's profile, status, or service eligibility.
-**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`.
-**Path Params:** `id`. **Request Body (all optional):** same shape as `POST /employees`, any subset.
-**Validation Rules:** same as `POST`; setting `status: "INACTIVE"` while the employee has future `CONFIRMED`/`PENDING` appointments returns `409 EMPLOYEE_HAS_UPCOMING_APPOINTMENTS` with the conflicting appointment count in `error.details`, requiring the caller to reassign/cancel them first — a deliberate guardrail against silently orphaning bookings.
+**Purpose:** Update an employee's profile, status, `userId` link, or service eligibility.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `employees:manage`.
+**Path Params:** `id`. **Request Body (all optional):** same shape as `POST /employees` plus `"status": "ACTIVE" | "ON_LEAVE" | "INACTIVE"`; `userId: null` unlinks the login account.
+**Validation Rules:** same as `POST`. **As-built note:** the `EMPLOYEE_HAS_UPCOMING_APPOINTMENTS` guardrail originally specified here is **not yet implemented** — no `Appointment` table exists in the schema until Milestone 6 (docs/WORKFORCE_ARCHITECTURE.md §6, docs/adr/ADR-008). A status transition to `INACTIVE`/`ON_LEAVE` is unconditionally allowed this milestone; the guardrail is a required Milestone 6 follow-up, not silently dropped.
 **Success — 200 OK:** `{ "success": true, "data": EmployeeDTO }`
-**Errors:** `404 NOT_FOUND`, `409 EMPLOYEE_HAS_UPCOMING_APPOINTMENTS`, `422 VALIDATION_ERROR`.
+**Errors:** `404 NOT_FOUND`, `409 USER_ALREADY_LINKED`, `422 VALIDATION_ERROR`, `422 INVALID_SERVICE_REFERENCE`, `422 INVALID_USER_REFERENCE`.
 **Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (PATCH semantics).
 
 #### `DELETE /employees/:id`
-**Purpose:** Soft-delete an employee (departed staff member) — the underlying `Employee` row survives with `deletedAt` set so historical `Appointment`/`AppointmentService` references remain intact (DATABASE_DESIGN.md 9.5).
-**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`.
+**Purpose:** Soft-delete an employee (departed staff member) — the underlying `Employee` row survives with `deletedAt` set so historical `Appointment`/`AppointmentService` references (once that table exists) remain intact.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `employees:manage`.
 **Path Params:** `id`.
 **Success — 200 OK:** `{ "success": true, "data": {}, "message": "Employee removed." }`
-**Errors:** `404 NOT_FOUND`, `409 EMPLOYEE_HAS_UPCOMING_APPOINTMENTS` (same guardrail as `PATCH`'s `INACTIVE` transition).
+**Errors:** `404 NOT_FOUND`. (The `EMPLOYEE_HAS_UPCOMING_APPOINTMENTS` guardrail note above applies here too.)
 **Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (soft-delete idempotent).
+
+#### `PUT /employees/:id/services`
+**Purpose:** Full-replace the employee's `EmployeeService` eligibility set (docs/WORKFORCE_ARCHITECTURE.md §2.4/§3) — the Employee ↔ Service assignment mutation, always initiated from the employee side (docs/adr/ADR-008 decision #1).
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `employees:manage`.
+**Path Params:** `id`. **Request Body:** `{ "serviceIds": ["uuid1", "uuid2"] }` — an empty array clears all assignments.
+**Validation Rules:** every `serviceIds[]` entry must reference a `Service` in the caller's tenant (`422 INVALID_SERVICE_REFERENCE`) — enforced at the application layer and backstopped at the database layer by the `EmployeeService` junction's compound FK (docs/SERVICE_ARCHITECTURE.md §3), which rejects a cross-tenant `(employeeId, serviceId)` pairing outright.
+**Success — 200 OK:** `{ "success": true, "data": { "serviceIds": ["uuid1", "uuid2"] } }`
+**Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `404 NOT_FOUND`, `422 INVALID_SERVICE_REFERENCE`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (full-replace semantics).
+
+#### `GET /employees/:id/working-hours`
+**Purpose:** Retrieve an employee's recurring weekly working-hours template.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`, `STAFF`.
+**Path Params:** `id`.
+**Success — 200 OK:** `{ "success": true, "data": WorkingHoursEntryDTO[] }` — any number of entries (0 or more per `dayOfWeek`; split shifts are valid, unlike the salon-wide `BusinessHours`' fixed 7-entry contract).
+**Errors:** `404 NOT_FOUND`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** N/A.
+
+#### `PUT /employees/:id/working-hours`
+**Purpose:** Replace the employee's entire working-hours set.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `employees:manage`.
+**Path Params:** `id`. **Request Body:** `{ "entries": WorkingHoursEntryDTO[] }`.
+**Validation Rules:** each entry's `dayOfWeek` 0–6; `startTime`/`endTime` `"HH:mm"`; `endTime` must be after `startTime` for any entry with `isActive: true` (`422 INVALID_WORKING_HOURS_ENTRY`).
+**Success — 200 OK:** `{ "success": true, "data": WorkingHoursEntryDTO[] }`
+**Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `404 NOT_FOUND`, `422 INVALID_WORKING_HOURS_ENTRY`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (full-replace semantics).
+
+#### `GET /employees/:id/time-off`
+**Purpose:** List an employee's time off / leave entries.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`, `STAFF`.
+**Path Params:** `id`.
+**Success — 200 OK:** `{ "success": true, "data": TimeOffDTO[] }`, sorted by `startDate` ascending.
+**Errors:** `404 NOT_FOUND`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** N/A.
+
+#### `POST /employees/:id/time-off`
+**Purpose:** Add a time-off / leave entry (a new, dedicated model — docs/WORKFORCE_ARCHITECTURE.md §2.3 — distinct from the tenant-wide `Holiday` calendar).
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `employees:manage`.
+**Path Params:** `id`. **Request Body:** `{ "startDate": "2026-08-01", "endDate": "2026-08-07", "reason": "Annual leave" }` — `reason` optional.
+**Validation Rules:** `startDate`/`endDate` valid `"YYYY-MM-DD"`; `endDate >= startDate` (`422 INVALID_TIME_OFF_RANGE`).
+**Success — 201 Created:** `{ "success": true, "data": TimeOffDTO }`
+**Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `404 NOT_FOUND`, `422 INVALID_TIME_OFF_RANGE`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required.
+
+#### `DELETE /employees/:id/time-off/:id`
+**Purpose:** Remove a time-off / leave entry (hard delete — a low-stakes leaf entity, same convention as `Holiday`).
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `employees:manage`.
+**Path Params:** `id` (employee), `id` (time-off entry).
+**Success — 200 OK:** `{ "success": true, "data": { "message": "Time off deleted." } }`
+**Errors:** `404 NOT_FOUND` (also for cross-tenant, never `403`).
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (hard delete — a retry against an already-deleted id returns `404`).
 
 ---
 
 ## 8. Services Endpoints
 
-Tag: `Services`. Base path: `/api/v1/services`. Tenant-scoped. (`ServiceCategory` CRUD is a natural companion resource but was not in the requested endpoint list; noted as a gap in Section 17 — category assignment is still settable via `Service`'s `categoryId` field below.)
+**Built:** Milestone 5 (docs/adr/ADR-008-workforce-and-service-catalog.md, docs/SERVICE_ARCHITECTURE.md). Tag: `Services`. Base path: `/api/v1/services`. Tenant-scoped. `ServiceCategory` CRUD is documented separately as Section 8a — the Section 17 gap this used to flag is now closed.
 
 #### `GET /services`
-**Purpose:** List the service catalog (FR-5) — the data the AI relies on for recommendations and booking.
+**Purpose:** List the service catalog (FR-5) — the data a future AI/Availability engine will rely on for recommendations and booking.
 **Auth:** Required. **Authorization:** `OWNER`, `MANAGER`, `STAFF`.
 **Query Params:** `filter[isActive]`, `filter[categoryId]`; sortable: `name`, `priceCents`, `displayOrder` (default `displayOrder`); pagination: offset; `q` searches `name`/`description`.
 **Success — 200 OK:** `{ "success": true, "data": ServiceDTO[], "meta": { "pagination": {...} } }`
@@ -831,37 +912,76 @@ Tag: `Services`. Base path: `/api/v1/services`. Tenant-scoped. (`ServiceCategory
 **Rate Limit:** Standard-Authenticated. **Idempotency:** N/A.
 
 #### `GET /services/:id`
-**Purpose:** Retrieve a single service's detail, including eligible-employee list.
+**Purpose:** Retrieve a single service's detail.
 **Auth:** Required. **Authorization:** `OWNER`, `MANAGER`, `STAFF`.
 **Path Params:** `id`.
+**As-built note:** does **not** include an eligible-employee list — that view is available via `GET /employees?filter[serviceId]=` instead, a deliberate module-boundary decision (docs/adr/ADR-008 decision #2) to avoid a `Services ↔ Employees` circular module dependency.
 **Success — 200 OK:** `{ "success": true, "data": ServiceDTO }`
 **Errors:** `404 NOT_FOUND`.
 **Rate Limit:** Standard-Authenticated. **Idempotency:** N/A.
 
 #### `POST /services`
 **Purpose:** Add a new service to the catalog.
-**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`.
-**Request Body:** `{ "name": "Haircut & Blow-Dry", "description": "...", "durationMinutes": 45, "priceCents": 8000, "currency": "USD", "categoryId": "uuid | null", "eligibleEmployeeIds": ["uuid1"] }`
-**Validation Rules:** `name` required (1–150 chars); `durationMinutes` integer, 5–480; `priceCents` non-negative integer; `currency` valid ISO 4217; `categoryId`/`eligibleEmployeeIds` entries must belong to the caller's tenant.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `services:manage`.
+**Request Body:** `{ "name": "Haircut & Blow-Dry", "description": "...", "durationMinutes": 45, "priceCents": 8000, "currency": "USD", "bufferTimeMinutes": 10, "categoryId": "uuid", "isActive": true, "displayOrder": 0 }` — all fields optional except `name`/`durationMinutes`/`priceCents`.
+**Validation Rules:** `name` required (1–150 chars); `durationMinutes` integer, 5–480; `priceCents` non-negative integer; `bufferTimeMinutes` non-negative integer, 0–480 (default `0`; new field, Milestone 5 — a per-service cleanup/prep buffer, distinct from the tenant-wide `TenantSettings.business.bookingBufferMinutes` reserved for the future Availability engine); `currency` valid ISO 4217; `categoryId` must belong to the caller's tenant (`422 INVALID_CATEGORY_REFERENCE`).
 **Success — 201 Created:** `{ "success": true, "data": ServiceDTO }`
-**Errors:** `402 TENANT_SUSPENDED`, `422 VALIDATION_ERROR`.
-**Rate Limit:** Standard-Authenticated. **Idempotency:** Recommended (optional), same rationale as `POST /employees`.
+**Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `422 VALIDATION_ERROR`, `422 INVALID_CATEGORY_REFERENCE`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required.
 
 #### `PATCH /services/:id`
 **Purpose:** Update a service's fields, including deactivation.
-**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`.
-**Path Params:** `id`. **Request Body (all optional):** same shape as `POST /services`.
-**Validation Rules:** same as `POST`. **Business rule:** editing `priceCents`/`durationMinutes` **never** modifies historical `AppointmentService` snapshot rows (DATABASE_DESIGN.md 1.4/PRISMA_SCHEMA.md 7.1) — this is stated explicitly here because it is the single most likely point of confusion for a frontend implementer expecting a price edit to retroactively "fix" a past invoice display.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `services:manage`.
+**Path Params:** `id`. **Request Body (all optional):** same shape as `POST /services`; `categoryId: null` un-categorizes the service.
+**Validation Rules:** same as `POST`. **Business rule:** editing `priceCents`/`durationMinutes`/`bufferTimeMinutes` **never** modifies historical booking snapshot rows (a future milestone's concern) — stated explicitly since it is the single most likely point of confusion for a frontend implementer expecting a price edit to retroactively "fix" a past invoice display.
 **Success — 200 OK:** `{ "success": true, "data": ServiceDTO }`
-**Errors:** `404 NOT_FOUND`, `422 VALIDATION_ERROR`.
+**Errors:** `404 NOT_FOUND`, `422 VALIDATION_ERROR`, `422 INVALID_CATEGORY_REFERENCE`.
 **Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (PATCH semantics).
 
 #### `DELETE /services/:id`
-**Purpose:** Soft-delete (retire) a service — excluded from `filter[isActive]=true` results and from the AI's active catalog immediately (cache-invalidated per Section 6's `PATCH /tenant/settings` note), while past `AppointmentService` snapshot rows remain intact.
-**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`.
+**Purpose:** Soft-delete (retire) a service — excluded from `filter[isActive]=true` results, while past booking snapshot rows (a future milestone's concern) remain intact.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `services:manage`.
 **Path Params:** `id`.
 **Success — 200 OK:** `{ "success": true, "data": {}, "message": "Service removed." }`
 **Errors:** `404 NOT_FOUND`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (soft-delete idempotent).
+
+---
+
+## 8a. Service Categories Endpoints
+
+**Built:** Milestone 5 (docs/adr/ADR-008-workforce-and-service-catalog.md, docs/SERVICE_ARCHITECTURE.md) — closes the gap Section 8's original note flagged. Tag: `Services`. Base path: `/api/v1/service-categories`. Tenant-scoped.
+
+#### `GET /service-categories`
+**Purpose:** List the salon's service-category groupings.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`, `STAFF`.
+**Success — 200 OK:** `{ "success": true, "data": ServiceCategoryDTO[] }`, sorted by `displayOrder` ascending — no pagination (a handful of rows per tenant).
+**Errors:** `401 UNAUTHORIZED`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** N/A.
+
+#### `POST /service-categories`
+**Purpose:** Add a new service category.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `services:manage`.
+**Request Body:** `{ "name": "Hair", "displayOrder": 0 }` — `displayOrder` optional, defaults to `0`.
+**Validation Rules:** `name` required, 1–100 chars.
+**Success — 201 Created:** `{ "success": true, "data": ServiceCategoryDTO }`
+**Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `422 VALIDATION_ERROR`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required.
+
+#### `PATCH /service-categories/:id`
+**Purpose:** Update a category's name or display order.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `services:manage`.
+**Path Params:** `id`. **Request Body (at least one field):** `{ "name": "...", "displayOrder": 0 }`.
+**Success — 200 OK:** `{ "success": true, "data": ServiceCategoryDTO }`
+**Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `404 NOT_FOUND`, `422 VALIDATION_ERROR`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (PATCH semantics).
+
+#### `DELETE /service-categories/:id`
+**Purpose:** Soft-delete a category — services referencing it are un-categorized (`categoryId` set to `null` via `onDelete: SetNull`), never deleted.
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`. **Permission:** `services:manage`.
+**Path Params:** `id`.
+**Success — 200 OK:** `{ "success": true, "data": { "message": "Service category deleted." } }`
+**Errors:** `402 TENANT_SUSPENDED`, `403 FORBIDDEN`, `404 NOT_FOUND` (also for cross-tenant, never `403`).
 **Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (soft-delete idempotent).
 
 ---
@@ -1292,7 +1412,7 @@ The `Idempotency-Key` header (Section 2.13) is modeled as a `components.paramete
 These surfaced while designing the endpoints above and are called out explicitly rather than quietly resolved, since they affect scope the requesting stakeholder should confirm before implementation:
 
 1. **File upload.** `TenantDTO.logoUrl`, `Invoice.invoicePdfUrl`, and WhatsApp media all depend on a `File`/`Media` upload mechanism (PRISMA_SCHEMA.md Section 12), but no `POST /files` (pre-signed-URL issuance) endpoint was in the requested list. Needed before `PATCH /tenant`'s `logoFileId` field is usable end-to-end. **Partially addressed, Milestone 4:** `GET/PATCH /salon`'s own `logoUrl` (Section 6a, `SalonProfileDTO`) is a plain placeholder string the caller supplies directly — real upload/storage integration is still deferred to whichever future milestone builds `Files`/S3.
-2. **`ServiceCategory` CRUD.** `Service.categoryId` is settable, but no dedicated endpoint to create/list/manage categories themselves was requested — likely an oversight worth closing, since a Salon Owner needs some way to create a category before assigning services to it.
+2. ~~**`ServiceCategory` CRUD.** `Service.categoryId` is settable, but no dedicated endpoint to create/list/manage categories themselves was requested — likely an oversight worth closing, since a Salon Owner needs some way to create a category before assigning services to it.~~ **Closed, Milestone 5 (docs/adr/ADR-008-workforce-and-service-catalog.md):** built as Section 8a, `GET/POST/PATCH/DELETE /service-categories[/:id]`.
 3. **`TenantInvitation` acceptance.** `POST /users` creates an invitation (Section 5), but no endpoint for the invitee to *accept* it (typically `POST /auth/accept-invitation` or folded into `POST /auth/register`'s flow when an invitation token is present) was explicitly requested — required to close the staff-onboarding loop from PROJECT_REQUIREMENTS.md Section 14.1.
 4. **`AppointmentFeedback` submission.** PRISMA_SCHEMA.md Section 7 models post-visit feedback, but no endpoint to submit it was requested (likely delivered via a WhatsApp-conversational flow rather than a REST call from the customer, who has no account — worth confirming this is AI-tool-mediated only, with no dashboard-facing submission endpoint needed).
 5. **Customer merge.** Flagged in Section 9's `PATCH /customers/:id` note — no endpoint exists to merge two customer records that turn out to be the same person under two phone numbers; not urgent for MVP but worth roadmapping.

@@ -13,6 +13,8 @@ import { AdminModule } from './modules/admin/admin.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { TenantsModule } from './modules/tenants/tenants.module';
 import { SalonModule } from './modules/salon/salon.module';
+import { ServicesModule } from './modules/services/services.module';
+import { EmployeesModule } from './modules/employees/employees.module';
 
 @Module({
   imports: [
@@ -25,6 +27,8 @@ import { SalonModule } from './modules/salon/salon.module';
     TenantsModule,
     AdminModule,
     SalonModule,
+    ServicesModule,
+    EmployeesModule,
   ],
   controllers: [],
   providers: [

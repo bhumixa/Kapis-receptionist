@@ -52,6 +52,12 @@ enum TenantStatus {
   CANCELLED
 }
 
+enum EmployeeStatus {
+  ACTIVE
+  ON_LEAVE
+  INACTIVE
+}
+
 // --- Authentication Models (docs/PRISMA_SCHEMA.md Section 3) ---------------
 
 model User {
@@ -84,6 +90,7 @@ model User {
   emailVerifications EmailVerification[]
   invitationsSent    TenantInvitation[]  @relation("InvitedBy")
   auditLogs          AuditLog[]
+  employee           Employee?
 
   @@index([tenantId], name: "idx_users_tenant_id")
   @@map("users")
@@ -226,13 +233,16 @@ model Tenant {
   updatedAt     DateTime     @updatedAt
   deletedAt     DateTime?
 
-  users         User[]
-  invitations   TenantInvitation[]
-  settings      TenantSettings?
-  auditLogs     AuditLog[]
-  salonProfile  SalonProfile?
-  businessHours BusinessHours[]
-  holidays      Holiday[]
+  users             User[]
+  invitations       TenantInvitation[]
+  settings          TenantSettings?
+  auditLogs         AuditLog[]
+  salonProfile      SalonProfile?
+  businessHours     BusinessHours[]
+  holidays          Holiday[]
+  employees         Employee[]
+  serviceCategories ServiceCategory[]
+  services          Service[]
 
   @@index([status], name: "idx_tenants_status")
   @@map("tenants")
@@ -354,6 +364,144 @@ model Holiday {
 
   @@unique([tenantId, date], name: "uq_holidays_tenant_date")
   @@map("holidays")
+}
+
+// --- Workforce & Service Catalog Models (Milestone 5, docs/WORKFORCE_
+// ARCHITECTURE.md, docs/SERVICE_ARCHITECTURE.md, docs/adr/ADR-008-workforce-
+// and-service-catalog.md) ---------------------------------------------------
+// Employee is a schedulable staff resource, distinct from User login access
+// (an Employee may optionally link to a User via userId). ServiceCategory/
+// Service form the catalog. EmployeeService is the first real consumer of
+// the composite-FK cross-tenant pattern (docs/TENANT_ARCHITECTURE.md
+// Section 4.1, PRISMA_SCHEMA.md Section 14.4) — Employee/Service each carry
+// a compound @@unique([tenantId, id]) so EmployeeService's relations can be
+// declared as compound FKs (fields: [tenantId, xId], references:
+// [tenantId, id]), expressible natively in Prisma without a manual SQL edit.
+// EmployeeTimeOff is a new, dedicated model for per-employee leave — kept
+// separate from the existing tenant-wide Holiday table (Milestone 4) rather
+// than extending Holiday with a nullable employeeId, so Milestone 4's
+// shipped schema/migration/tests remain untouched (ADR-008).
+
+model Employee {
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String         @db.Uuid
+  userId        String?        @unique @db.Uuid
+  firstName     String         @db.VarChar(100)
+  lastName      String         @db.VarChar(100)
+  phoneNumber   String?        @db.VarChar(20)
+  status        EmployeeStatus @default(ACTIVE)
+  colorTag      String?        @db.VarChar(7)
+  bio           String?        @db.Text
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  deletedAt     DateTime?
+  deletedByType ActorType?
+  deletedById   String?        @db.Uuid
+
+  tenant       Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user         User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  services     EmployeeService[]
+  workingHours WorkingHours[]
+  timeOff      EmployeeTimeOff[]
+
+  @@unique([tenantId, id], name: "uq_employees_tenant_id")
+  @@index([tenantId, status], name: "idx_employees_tenant_status")
+  @@map("employees")
+}
+
+model ServiceCategory {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId     String    @db.Uuid
+  name         String    @db.VarChar(100)
+  displayOrder Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  services Service[]
+
+  @@index([tenantId], name: "idx_service_categories_tenant_id")
+  @@map("service_categories")
+}
+
+model Service {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String    @db.Uuid
+  categoryId        String?   @db.Uuid
+  name              String    @db.VarChar(150)
+  description       String?   @db.Text
+  durationMinutes   Int
+  priceCents        Int
+  currency          String    @default("USD") @db.Char(3)
+  bufferTimeMinutes Int       @default(0)
+  isActive          Boolean   @default(true)
+  displayOrder      Int       @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  tenant    Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category  ServiceCategory?  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  employees EmployeeService[]
+
+  @@unique([tenantId, id], name: "uq_services_tenant_id")
+  @@index([tenantId, isActive], name: "idx_services_tenant_active")
+  @@map("services")
+}
+
+model EmployeeService {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String   @db.Uuid
+  employeeId String   @db.Uuid
+  serviceId  String   @db.Uuid
+  createdAt  DateTime @default(now())
+
+  // Compound FKs against each side's (tenantId, id) composite unique —
+  // the composite-FK cross-tenant pattern (docs/TENANT_ARCHITECTURE.md
+  // Section 4.1): the database itself rejects linking an employeeId/
+  // serviceId pair that belong to two different tenants, not just the
+  // application layer.
+  employee Employee @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Cascade)
+  service  Service  @relation(fields: [tenantId, serviceId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([employeeId, serviceId], name: "uq_employee_services_employee_service")
+  @@index([serviceId], name: "idx_employee_services_service_id")
+  @@index([tenantId], name: "idx_employee_services_tenant_id")
+  @@map("employee_services")
+}
+
+model WorkingHours {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String   @db.Uuid
+  employeeId String   @db.Uuid
+  dayOfWeek  Int      @db.SmallInt // 0=Sunday..6=Saturday
+  startTime  DateTime @db.Time
+  endTime    DateTime @db.Time
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId, dayOfWeek], name: "idx_working_hours_employee_day")
+  @@map("working_hours")
+}
+
+model EmployeeTimeOff {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String   @db.Uuid
+  employeeId String   @db.Uuid
+  startDate  DateTime @db.Date
+  endDate    DateTime @db.Date
+  reason     String?  @db.VarChar(255)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, employeeId], name: "idx_employee_time_off_tenant_employee")
+  @@map("employee_time_off")
 }
 
 // --- System / Audit Models (Milestone 3 pull-forward from Milestone 9;

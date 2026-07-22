@@ -38,6 +38,15 @@ const PERMISSIONS = [
     key: 'salon:manage',
     description: 'Manage salon profile, branding, business hours, and holidays',
   },
+  {
+    key: 'employees:manage',
+    description:
+      'Manage employees, working hours, time off, and service assignment',
+  },
+  {
+    key: 'services:manage',
+    description: 'Manage service categories and the service catalog',
+  },
 ] as const;
 
 const ROLE_PERMISSIONS: Record<RoleName, readonly string[]> = {
@@ -48,6 +57,8 @@ const ROLE_PERMISSIONS: Record<RoleName, readonly string[]> = {
     'tenant:manage',
     'settings:manage',
     'salon:manage',
+    'employees:manage',
+    'services:manage',
   ],
   [RoleName.STAFF]: [],
 };

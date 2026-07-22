@@ -87,6 +87,47 @@ export const routes: Routes = [
           import('./features/salon/pages/holidays-page/holidays-page').then((m) => m.HolidaysPage),
       },
       {
+        // No tenantActiveGuard here: employee/service reads are STAFF-broad
+        // and stay reachable for a suspended tenant, mirroring `/app/salon`'s
+        // same read/write split — mutations are gated in-page via
+        // PermissionService, with the server-side TenantActiveGuard as the
+        // real enforcement (docs/adr/ADR-008-workforce-and-service-catalog.md).
+        path: 'employees',
+        canActivate: [roleGuard],
+        data: { roles: ['STAFF'] },
+        loadComponent: () =>
+          import('./features/employees/pages/employees-list-page/employees-list-page').then(
+            (m) => m.EmployeesListPage,
+          ),
+      },
+      {
+        path: 'employees/:id',
+        canActivate: [roleGuard],
+        data: { roles: ['STAFF'] },
+        loadComponent: () =>
+          import('./features/employees/pages/employee-profile-page/employee-profile-page').then(
+            (m) => m.EmployeeProfilePage,
+          ),
+      },
+      {
+        path: 'services',
+        canActivate: [roleGuard],
+        data: { roles: ['STAFF'] },
+        loadComponent: () =>
+          import('./features/services/pages/services-list-page/services-list-page').then(
+            (m) => m.ServicesListPage,
+          ),
+      },
+      {
+        path: 'services/categories',
+        canActivate: [roleGuard],
+        data: { roles: ['STAFF'] },
+        loadComponent: () =>
+          import('./features/services/pages/service-categories-page/service-categories-page').then(
+            (m) => m.ServiceCategoriesPage,
+          ),
+      },
+      {
         // TenantActiveGuard's own redirect target (Section 3.3's exemption
         // pattern) — deliberately not itself gated by tenantActiveGuard, or
         // a suspended tenant could never reach the page explaining why.

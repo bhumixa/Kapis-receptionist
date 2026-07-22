@@ -432,6 +432,8 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 
 **Milestone 4 note (docs/adr/ADR-007-salon-management.md):** the two tables below (`business_hours`, `holidays`) were built in Milestone 4 as scoped-down subsets of this section's fuller design — no `employee_id` column exists yet on either (Employees don't exist until the renumbered Milestone 5), so both are tenant-wide only for now. Field names/shapes match this section's design exactly, so that future milestone's migration only *adds* columns. See each table's own "Amended, Milestone 4" note below, and docs/SALON_ARCHITECTURE.md for the as-built reference.
 
+**Milestone 5 note (docs/adr/ADR-008-workforce-and-service-catalog.md):** `employees` (3.3.1), `categories` (3.3.2, built as `service_categories`), `services` (3.3.3), `employee_services` (3.3.4), and `working_hours` (3.3.5) were built largely as designed below — see each table's own "Amended, Milestone 5" note for the small deltas (a new `buffer_time_minutes` column on `services`; a compound `(tenant_id, id)` unique added to `employees`/`services` for the composite-FK pattern, §5 below). `employee_availability` (3.3.7, date-specific working-hours overrides) was **not** built — Milestone 5's brief called for "time off / leave" instead, delivered as a new, separate `employee_time_off` table (not a variant of this section's design) — see 3.3.7's own note. `holidays` still has no `employee_id` column — extending it was considered and rejected in favor of the new `employee_time_off` table, to avoid touching Milestone 4's shipped schema/migration/tests for a conceptually distinct feature (a date range, not a single closure date). See docs/WORKFORCE_ARCHITECTURE.md and docs/SERVICE_ARCHITECTURE.md for the as-built reference.
+
 #### 3.3.1 `employees`
 **Purpose:** A schedulable staff resource — distinct from `User` (login access); an `Employee` may optionally link to a `User`.
 **Columns:**
@@ -453,6 +455,7 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 **Business Rules:** An `Employee` with `status != 'ACTIVE'` is excluded from availability computation (SYSTEM_ARCHITECTURE.md `Availability` module).
 **Expected Row Growth:** Low per tenant (1–20 typical) — at 10,000 tenants, roughly 50,000–200,000 rows total.
 **Frequently Queried Columns:** `(tenant_id, status)`.
+**Amended, Milestone 5 (docs/adr/ADR-008-workforce-and-service-catalog.md):** built as designed above, plus a compound `uq_employees_tenant_id` unique on `(tenant_id, id)` — the composite-FK pattern's referenced side (§5). `has many WorkingHours, EmployeeTimeOff` (not `EmployeeAvailability` — a new, differently-shaped model was built instead; see 3.3.7's note).
 
 ---
 
@@ -467,6 +470,7 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 **Business Rules:** Optional grouping — a `Service` may have a `null` category.
 **Expected Row Growth:** Very low — a handful per tenant.
 **Frequently Queried Columns:** `tenant_id`.
+**Amended, Milestone 5 (docs/adr/ADR-008-workforce-and-service-catalog.md):** built as `service_categories` (PRISMA_SCHEMA.md's already-reserved name), matching this design otherwise. The partial unique on `(tenant_id, name)` was **not** built (a plain `@@index([tenantId])` only) — not requested this milestone and not required for the CRUD behavior actually needed; a future pass can add it without a naming change.
 
 ---
 
@@ -492,6 +496,7 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 **Business Rules:** `duration_minutes` and `price_cents` must be positive; changing these values does not retroactively alter already-booked `AppointmentService` snapshot rows (1.4).
 **Expected Row Growth:** Low per tenant (typically 5–50) — at 10,000 tenants, ~100,000–500,000 rows.
 **Frequently Queried Columns:** `(tenant_id, is_active)`, `id` (heavy join target from `EmployeeService`/`AppointmentService`).
+**Amended, Milestone 5 (docs/adr/ADR-008-workforce-and-service-catalog.md):** built as designed above, plus two additions: a new `buffer_time_minutes` INTEGER column (default `0`, non-negative) — a per-service cleanup/prep buffer distinct from `tenant_settings.business.booking_buffer_minutes` (still dormant, reserved for a future tenant-wide Availability engine) — and a compound `uq_services_tenant_id` unique on `(tenant_id, id)`, the composite-FK pattern's other referenced side (§5).
 
 ---
 
@@ -534,6 +539,7 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 **Business Rules:** `end_time` must be after `start_time` within a single row (overnight shifts are out of scope for MVP, consistent with typical salon hours).
 **Expected Row Growth:** Low — bounded by (employees × days × shifts per day).
 **Frequently Queried Columns:** `(employee_id, day_of_week)` — read on every availability computation.
+**Amended, Milestone 5 (docs/adr/ADR-008-workforce-and-service-catalog.md):** built exactly as designed above; `PUT /employees/:id/working-hours` performs a full delete-then-insert replace of the employee's entire set (not a per-row `PATCH`).
 
 ---
 
@@ -563,6 +569,7 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 **Business Rules:** Overrides take precedence over `WorkingHours` for the given date in availability computation.
 **Expected Row Growth:** Low — occasional, ad hoc entries.
 **Frequently Queried Columns:** `(employee_id, date)`.
+**Amended, Milestone 5 (docs/adr/ADR-008-workforce-and-service-catalog.md) — not built:** Milestone 5's brief called for "time off / leave," which maps conceptually to this table's date-specific-override idea but with a different shape (a **date range**, not a single date + `EXTRA`/`REDUCED` type). Rather than force this design's single-date shape, a new `employee_time_off` table was built instead — `employee_id`, `start_date`, `end_date`, `reason` (nullable) — with `end_date >= start_date` as its only validation rule (no "extra hours" concept, since that's a distinct future feature from leave tracking). `employee_availability` as designed here remains unbuilt and is not superseded by `employee_time_off` — a future milestone building the Availability engine may still need this table's original "extra/reduced hours on a specific date" concept, distinct from full-range unavailability.
 
 ---
 
@@ -1385,7 +1392,7 @@ This is the volume tier that most directly demands the two specific mitigations 
 
 | # | Risk | Bottleneck / Failure Mode | Mitigation |
 |---|---|---|---|
-| DB-R1 | Cross-tenant FK integrity gap (Section 5.3) — PostgreSQL cannot natively enforce "these two FK'd rows share the same `tenant_id`" without composite FKs, which add index/storage overhead on every tenant-owned table | A bug could create an `Appointment` referencing an `Employee` from a *different* tenant, silently corrupting isolation at the data layer even if the application-layer guard is bypassed | Adopt composite foreign keys `(tenant_id, id)` for the highest-risk relations (`Appointment` ↔ `Employee`/`Customer`/`Service`) in the Prisma schema phase (11.3); backstop with integration tests asserting rejection; RLS (5.7) as a further backstop once justified |
+| DB-R1 | Cross-tenant FK integrity gap (Section 5.3) — PostgreSQL cannot natively enforce "these two FK'd rows share the same `tenant_id`" without composite FKs, which add index/storage overhead on every tenant-owned table | A bug could create an `Appointment` referencing an `Employee` from a *different* tenant, silently corrupting isolation at the data layer even if the application-layer guard is bypassed | Adopt composite foreign keys `(tenant_id, id)` for the highest-risk relations (`Appointment` ↔ `Employee`/`Customer`/`Service`) in the Prisma schema phase (11.3); backstop with integration tests asserting rejection; RLS (5.7) as a further backstop once justified — **first exercised, Milestone 5 (docs/adr/ADR-008-workforce-and-service-catalog.md):** `EmployeeService`'s `(tenant_id, employee_id)`/`(tenant_id, service_id)` compound FKs are the first real instance of this pattern, generated natively by `prisma migrate dev` with no manual SQL edit needed, and proven to reject a cross-tenant pairing by a dedicated integration test (`test/integration/employees/employee-service-assignment.integration-spec.ts`) that bypasses the application layer entirely. The `Appointment`↔`Employee`/`Customer`/`Service` instance remains open for Milestone 6. |
 | DB-R2 | `messages` / `whatsapp_webhook_events` / `audit_logs` / `activity_logs` unbounded growth | Query performance degradation, bloated indexes, slow backups/vacuum on a single self-managed Postgres instance (no managed auto-scaling, per SYSTEM_ARCHITECTURE.md's fixed infra) | Time-based partitioning + defined retention/archival policy (Section 12.5), scheduled well before the 10,000-salon tier is reached, not reactively |
 | DB-R3 | Booking race conditions under concurrent load (two near-simultaneous booking attempts for the same employee/slot) | A subtle timing gap between availability-check and appointment-creation could theoretically allow a double-booking despite the application-layer transaction, especially under high concurrency | Redis distributed lock (10.4) as a first line of defense against contention; the actual correctness guarantee still needs to be a database-transaction-level check (a `SELECT ... FOR UPDATE` on the relevant time-window rows, or the `btree_gist` `EXCLUDE` constraint option flagged in 3.5.1) — this specific mechanism must be finalized and load-tested in the Prisma/migration phase, not assumed solved by this document alone |
 | DB-R4 | JSONB overuse/misuse (`AIContext.state`, `AuditLog.metadata`, webhook `payload` columns) | Unbounded, unvalidated JSONB growth can bloat row/table size and make querying inconsistent if application code doesn't enforce a stable shape | JSONB is scoped deliberately (1.4/1.11) to genuinely flexible/evolving data only — never used as a substitute for proper relational columns on core business entities; application-layer schema validation (e.g., a TypeScript type/Zod schema per JSONB field) is a cross-referenced requirement for the next (application) phase |

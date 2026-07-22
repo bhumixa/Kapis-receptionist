@@ -1,0 +1,335 @@
+<div class="max-w-3xl space-y-8">
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-xl font-semibold text-gray-900">Employee</h1>
+      <p class="text-sm text-gray-500 mt-1">Profile, working hours, time off, and service assignment.</p>
+    </div>
+    <a routerLink="/app/employees" class="text-sm font-medium text-gray-600 hover:underline">
+      &larr; Back to employees
+    </a>
+  </div>
+
+  @if (isLoading()) {
+    <p class="text-sm text-gray-500">Loading...</p>
+  } @else if (loadError(); as message) {
+    <div class="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800" role="alert">
+      {{ message }}
+    </div>
+  } @else {
+    <!-- Profile -->
+    <section class="space-y-4 border-b border-gray-200 pb-8">
+      <h2 class="text-base font-semibold text-gray-900">Profile</h2>
+      @if (profileSaved()) {
+        <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">
+          Profile updated.
+        </div>
+      }
+      @if (profileError(); as message) {
+        <div class="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800" role="alert">
+          {{ message }}
+        </div>
+      }
+      <form [formGroup]="profileForm" (ngSubmit)="saveProfile()" novalidate class="space-y-4">
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label for="pFirstName" class="block text-sm font-medium text-gray-700 mb-1">First name</label>
+            <input
+              id="pFirstName"
+              type="text"
+              formControlName="firstName"
+              [readonly]="!canManageEmployees()"
+              class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+          </div>
+          <div>
+            <label for="pLastName" class="block text-sm font-medium text-gray-700 mb-1">Last name</label>
+            <input
+              id="pLastName"
+              type="text"
+              formControlName="lastName"
+              [readonly]="!canManageEmployees()"
+              class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label for="pPhone" class="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+            <input
+              id="pPhone"
+              type="tel"
+              formControlName="phoneNumber"
+              [readonly]="!canManageEmployees()"
+              class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+          </div>
+          <div>
+            <label for="pStatus" class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+            <select
+              id="pStatus"
+              formControlName="status"
+              [attr.disabled]="!canManageEmployees() ? true : null"
+              class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            >
+              @for (status of statuses; track status) {
+                <option [value]="status">{{ statusLabels[status] }}</option>
+              }
+            </select>
+          </div>
+        </div>
+        <div>
+          <label for="pColor" class="block text-sm font-medium text-gray-700 mb-1">Color tag</label>
+          <div class="flex items-center gap-2">
+            <input
+              id="pColor"
+              type="text"
+              placeholder="#4F46E5"
+              formControlName="colorTag"
+              [readonly]="!canManageEmployees()"
+              class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+            @if (profileForm.controls.colorTag.value) {
+              <span
+                class="h-8 w-8 rounded border border-gray-200 shrink-0"
+                [style.background-color]="profileForm.controls.colorTag.value"
+              ></span>
+            }
+          </div>
+        </div>
+        <div>
+          <label for="pBio" class="block text-sm font-medium text-gray-700 mb-1">Bio</label>
+          <textarea
+            id="pBio"
+            rows="3"
+            formControlName="bio"
+            [readonly]="!canManageEmployees()"
+            class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+          ></textarea>
+        </div>
+        @if (canManageEmployees()) {
+          <button
+            type="submit"
+            [disabled]="isSavingProfile()"
+            class="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+          >
+            {{ isSavingProfile() ? 'Saving...' : 'Save profile' }}
+          </button>
+        }
+      </form>
+    </section>
+
+    <!-- Working hours -->
+    <section class="space-y-4 border-b border-gray-200 pb-8">
+      <h2 class="text-base font-semibold text-gray-900">Working hours</h2>
+      @if (hoursSaved()) {
+        <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">
+          Working hours updated.
+        </div>
+      }
+      @if (hoursError(); as message) {
+        <div class="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800" role="alert">
+          {{ message }}
+        </div>
+      }
+      <form [formGroup]="hoursForm" (ngSubmit)="saveWorkingHours()" novalidate class="space-y-3">
+        @if (hoursEntries.controls.length === 0) {
+          <p class="text-sm text-gray-500">No working hours set yet. Add a row to get started.</p>
+        }
+        @for (entry of hoursEntries.controls; track $index) {
+          <div [formGroup]="entry" class="flex items-end gap-3">
+            <div>
+              <label [for]="'whDay' + $index" class="block text-xs font-medium text-gray-700 mb-1">Day</label>
+              <select
+                [id]="'whDay' + $index"
+                formControlName="dayOfWeek"
+                [attr.disabled]="!canManageEmployees() ? true : null"
+                class="rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              >
+                @for (label of dayLabels; track $index; let dayIndex = $index) {
+                  <option [value]="dayIndex">{{ label }}</option>
+                }
+              </select>
+            </div>
+            <div>
+              <label [for]="'whStart' + $index" class="block text-xs font-medium text-gray-700 mb-1">Start</label>
+              <input
+                [id]="'whStart' + $index"
+                type="time"
+                formControlName="startTime"
+                [readonly]="!canManageEmployees()"
+                class="rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              />
+            </div>
+            <div>
+              <label [for]="'whEnd' + $index" class="block text-xs font-medium text-gray-700 mb-1">End</label>
+              <input
+                [id]="'whEnd' + $index"
+                type="time"
+                formControlName="endTime"
+                [readonly]="!canManageEmployees()"
+                class="rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              />
+            </div>
+            <label class="flex items-center gap-1.5 text-sm text-gray-700 pb-1.5">
+              <input type="checkbox" formControlName="isActive" [disabled]="!canManageEmployees()" />
+              Active
+            </label>
+            @if (canManageEmployees()) {
+              <button
+                type="button"
+                (click)="removeHoursEntry($index)"
+                class="text-sm font-medium text-red-600 hover:underline pb-1.5"
+              >
+                Remove
+              </button>
+            }
+          </div>
+        }
+        @if (canManageEmployees()) {
+          <div class="flex items-center gap-3 pt-2">
+            <button
+              type="button"
+              (click)="addHoursEntry()"
+              class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              + Add row
+            </button>
+            <button
+              type="submit"
+              [disabled]="isSavingHours()"
+              class="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+            >
+              {{ isSavingHours() ? 'Saving...' : 'Save working hours' }}
+            </button>
+          </div>
+        }
+      </form>
+    </section>
+
+    <!-- Time off -->
+    <section class="space-y-4 border-b border-gray-200 pb-8">
+      <h2 class="text-base font-semibold text-gray-900">Time off</h2>
+      @if (canManageEmployees()) {
+        @if (timeOffError(); as message) {
+          <div class="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800" role="alert">
+            {{ message }}
+          </div>
+        }
+        <form [formGroup]="timeOffForm" (ngSubmit)="createTimeOff()" novalidate class="flex items-end gap-3">
+          <div>
+            <label for="toStart" class="block text-sm font-medium text-gray-700 mb-1">Start date</label>
+            <input
+              id="toStart"
+              type="date"
+              formControlName="startDate"
+              class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+          </div>
+          <div>
+            <label for="toEnd" class="block text-sm font-medium text-gray-700 mb-1">End date</label>
+            <input
+              id="toEnd"
+              type="date"
+              formControlName="endDate"
+              class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+          </div>
+          <div class="flex-1">
+            <label for="toReason" class="block text-sm font-medium text-gray-700 mb-1">Reason</label>
+            <input
+              id="toReason"
+              type="text"
+              placeholder="Annual leave"
+              formControlName="reason"
+              class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+          </div>
+          <button
+            type="submit"
+            [disabled]="isCreatingTimeOff()"
+            class="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+          >
+            {{ isCreatingTimeOff() ? 'Adding...' : 'Add time off' }}
+          </button>
+        </form>
+      }
+
+      @if (timeOff().length === 0) {
+        <p class="text-sm text-gray-500">No time off scheduled.</p>
+      } @else {
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-gray-500 border-b border-gray-200">
+              <th class="py-2 font-medium">Start</th>
+              <th class="py-2 font-medium">End</th>
+              <th class="py-2 font-medium">Reason</th>
+              <th class="py-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (entry of timeOff(); track entry.id) {
+              <tr class="border-b border-gray-100">
+                <td class="py-2">{{ entry.startDate }}</td>
+                <td class="py-2">{{ entry.endDate }}</td>
+                <td class="py-2">{{ entry.reason ?? '—' }}</td>
+                <td class="py-2 text-right whitespace-nowrap">
+                  @if (canManageEmployees()) {
+                    <button
+                      type="button"
+                      (click)="deleteTimeOff(entry)"
+                      class="text-sm font-medium text-red-600 hover:underline"
+                    >
+                      Delete
+                    </button>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    </section>
+
+    <!-- Service assignment -->
+    <section class="space-y-4">
+      <h2 class="text-base font-semibold text-gray-900">Assigned services</h2>
+      @if (servicesSaved()) {
+        <div class="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">
+          Service assignment updated.
+        </div>
+      }
+      @if (servicesError(); as message) {
+        <div class="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800" role="alert">
+          {{ message }}
+        </div>
+      }
+      @if (allServices().length === 0) {
+        <p class="text-sm text-gray-500">No services in the catalog yet.</p>
+      } @else {
+        <div class="grid grid-cols-2 gap-2">
+          @for (service of allServices(); track service.id) {
+            <label class="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                [checked]="isServiceSelected(service.id)"
+                [disabled]="!canManageEmployees()"
+                (change)="toggleService(service.id)"
+              />
+              {{ service.name }}
+            </label>
+          }
+        </div>
+        @if (canManageEmployees()) {
+          <button
+            type="button"
+            (click)="saveServiceAssignment()"
+            [disabled]="isSavingServices()"
+            class="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+          >
+            {{ isSavingServices() ? 'Saving...' : 'Save assignment' }}
+          </button>
+        }
+      }
+    </section>
+  }
+</div>
