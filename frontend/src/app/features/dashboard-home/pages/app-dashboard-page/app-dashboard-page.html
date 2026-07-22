@@ -1,0 +1,14 @@
+<div class="max-w-3xl">
+  @if (currentUser(); as user) {
+    <h1 class="text-2xl font-semibold text-gray-900">Welcome, {{ user.firstName }}</h1>
+  }
+  @if (currentTenant(); as tenant) {
+    <p class="mt-1 text-gray-500">{{ tenant.name }} &middot; {{ tenant.status }} plan</p>
+  }
+  <div class="mt-6 rounded-lg border border-gray-200 bg-white p-6">
+    <p class="text-sm text-gray-600">
+      You're logged in. The full dashboard (bookings, conversations, staff) lands in later
+      milestones.
+    </p>
+  </div>
+</div>

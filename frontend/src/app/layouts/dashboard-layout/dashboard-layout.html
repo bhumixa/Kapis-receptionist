@@ -1,0 +1,26 @@
+<div class="min-h-screen flex flex-col bg-gray-50">
+  <header class="border-b border-gray-200 bg-white px-6 py-4 flex items-center justify-between">
+    <div>
+      <span class="text-lg font-semibold text-gray-900">Kapis Receptionist</span>
+      @if (currentTenant(); as tenant) {
+        <span class="ml-3 text-sm text-gray-500">{{ tenant.name }}</span>
+      }
+    </div>
+    <div class="flex items-center gap-4">
+      @if (currentUser(); as user) {
+        <span class="text-sm text-gray-700">{{ user.firstName }} {{ user.lastName }}</span>
+      }
+      <button
+        type="button"
+        (click)="logout()"
+        [disabled]="loggingOut()"
+        class="text-sm font-medium text-gray-600 hover:text-gray-900 disabled:opacity-50"
+      >
+        {{ loggingOut() ? 'Logging out...' : 'Log out' }}
+      </button>
+    </div>
+  </header>
+  <main class="flex-1 px-6 py-8">
+    <router-outlet />
+  </main>
+</div>

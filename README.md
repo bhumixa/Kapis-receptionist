@@ -2,7 +2,7 @@
 
 AI-powered WhatsApp appointment booking SaaS for salons and beauty businesses — a multi-tenant platform where an AI receptionist answers customer questions, books/reschedules/cancels appointments, and hands off to staff when needed, all inside WhatsApp.
 
-**Status:** In development — Milestone 1 (Project Foundation) complete. See [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for the full milestone/sprint plan.
+**Status:** In development — Milestone 1 (Project Foundation) complete; Milestone 2 (Authentication) in progress — Core Authentication (Register/Login/Logout/Refresh/Get Current User, both stacks) done, see [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) and [docs/adr/ADR-003-core-authentication.md](docs/adr/ADR-003-core-authentication.md). See [IMPLEMENTATION_ROADMAP.md](docs/IMPLEMENTATION_ROADMAP.md) for the full milestone/sprint plan.
 
 ## Documentation
 
@@ -51,6 +51,8 @@ npm install
 
 # 2. Configure environment
 cp backend/.env.example backend/.env
+# Fill in JWT_ACCESS_SECRET and JWT_REFRESH_SECRET (each ≥32 chars, independently
+# generated — never reuse one for the other): openssl rand -base64 48
 
 # 3. Start the full stack (postgres, redis, backend, frontend, nginx)
 cd infrastructure

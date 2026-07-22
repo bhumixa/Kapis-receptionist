@@ -429,10 +429,11 @@ Tag: `Auth`. Base path: `/api/v1/auth`.
 { "email": "owner@salon.com", "password": "Str0ngP@ss!", "firstName": "Maria", "lastName": "Gomez", "tenantName": "Bella Salon", "timezone": "America/Sao_Paulo" }
 ```
 **Validation Rules:** `email` valid format & globally unique (PRISMA_SCHEMA.md 3.1.1); `password` min 8 chars, ≥1 uppercase, ≥1 number; `firstName`/`lastName`/`tenantName` required, 1–100 chars; `timezone` must be a valid IANA name.
-**Success — 201 Created:** `{ "success": true, "data": { "user": UserDTO, "tenant": TenantDTO }, "message": "Verification email sent." }`
+**Success — 201 Created:** `{ "success": true, "data": { "user": UserDTO, "tenant": TenantDTO }, "message": "Account created. Please log in." }`
 **Errors:** `409 EMAIL_ALREADY_EXISTS`, `422 VALIDATION_ERROR` (+ global set, Section 2.3.1).
 **Rate Limit:** Public-Sensitive. **Idempotency:** Not required (naturally idempotent via `email` uniqueness, Section 2.13).
-**Example:** `curl -X POST /api/v1/auth/register -d '{...above...}'` → `201` with the body shown above; a `TenantSettings` row and default trial `Subscription` are created server-side as part of the same transaction (not separately callable).
+**Example:** `curl -X POST /api/v1/auth/register -d '{...above...}'` → `201` with the body shown above.
+**Implementation note (Milestone 2 Core Authentication sprint, docs/adr/ADR-003-core-authentication.md):** as of this sprint, only `Tenant` + `User` (`OWNER`) + `UserRole` are created — `TenantSettings` and the default trial `Subscription` don't exist as tables yet (Milestone 3/8) and are not created here. The `message` was originally `"Verification email sent."`; changed because no verification email is sent this sprint (email verification is out of scope, docs/AUTHENTICATION.md Section 8). This note should be removed once Milestone 3 wires up the full atomic `Tenant`+`Owner`+`TenantSettings`+`Subscription` transaction IMPLEMENTATION_ROADMAP.md Sprint 3.1 specifies, at which point the original documented behavior above the note becomes accurate again.
 
 #### `POST /auth/login`
 **Purpose:** Authenticate with email/password and establish a session.

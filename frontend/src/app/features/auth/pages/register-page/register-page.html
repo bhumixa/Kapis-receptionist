@@ -1,0 +1,124 @@
+<h1 class="text-xl font-semibold text-gray-900 mb-1">Create your salon account</h1>
+<p class="text-sm text-gray-500 mb-6">Set up your salon's AI receptionist in a few minutes.</p>
+
+@if (errorMessage(); as message) {
+  <div class="mb-4 rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800" role="alert">
+    {{ message }}
+  </div>
+}
+
+<form [formGroup]="form" (ngSubmit)="submit()" novalidate class="space-y-4">
+  <div class="grid grid-cols-2 gap-4">
+    <div>
+      <label for="firstName" class="block text-sm font-medium text-gray-700 mb-1">First name</label>
+      <input
+        id="firstName"
+        type="text"
+        formControlName="firstName"
+        autocomplete="given-name"
+        class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+      />
+    </div>
+    <div>
+      <label for="lastName" class="block text-sm font-medium text-gray-700 mb-1">Last name</label>
+      <input
+        id="lastName"
+        type="text"
+        formControlName="lastName"
+        autocomplete="family-name"
+        class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+      />
+    </div>
+  </div>
+
+  <div>
+    <label for="tenantName" class="block text-sm font-medium text-gray-700 mb-1">Salon name</label>
+    <input
+      id="tenantName"
+      type="text"
+      formControlName="tenantName"
+      class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+    />
+  </div>
+
+  <div>
+    <label for="email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+    <input
+      id="email"
+      type="email"
+      formControlName="email"
+      autocomplete="email"
+      class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+      [attr.aria-invalid]="form.controls.email.invalid && form.controls.email.touched"
+    />
+    @if (form.controls.email.hasError('taken')) {
+      <p class="mt-1 text-xs text-red-600">An account with this email already exists.</p>
+    } @else if (form.controls.email.invalid && form.controls.email.touched) {
+      <p class="mt-1 text-xs text-red-600">Enter a valid email address.</p>
+    }
+  </div>
+
+  <div>
+    <label for="password" class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+    <input
+      id="password"
+      type="password"
+      formControlName="password"
+      autocomplete="new-password"
+      class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+      [attr.aria-invalid]="form.controls.password.invalid && form.controls.password.touched"
+    />
+    @if (form.controls.password.touched && form.controls.password.errors; as errors) {
+      <ul class="mt-1 text-xs text-red-600 space-y-0.5">
+        @if (errors['minLength']) {
+          <li>At least 8 characters</li>
+        }
+        @if (errors['uppercase']) {
+          <li>At least one uppercase letter</li>
+        }
+        @if (errors['number']) {
+          <li>At least one number</li>
+        }
+      </ul>
+    }
+  </div>
+
+  <div>
+    <label for="confirmPassword" class="block text-sm font-medium text-gray-700 mb-1">Confirm password</label>
+    <input
+      id="confirmPassword"
+      type="password"
+      formControlName="confirmPassword"
+      autocomplete="new-password"
+      class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+      [attr.aria-invalid]="form.controls.confirmPassword.invalid && form.controls.confirmPassword.touched"
+    />
+    @if (form.controls.confirmPassword.hasError('mismatch') && form.controls.confirmPassword.touched) {
+      <p class="mt-1 text-xs text-red-600">Passwords do not match.</p>
+    }
+  </div>
+
+  <div>
+    <label for="timezone" class="block text-sm font-medium text-gray-700 mb-1">Timezone</label>
+    <input
+      id="timezone"
+      type="text"
+      formControlName="timezone"
+      class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+    />
+  </div>
+
+  <button
+    type="submit"
+    [disabled]="isSubmitting()"
+    [attr.aria-busy]="isSubmitting()"
+    class="w-full rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+  >
+    {{ isSubmitting() ? 'Creating account...' : 'Create account' }}
+  </button>
+</form>
+
+<p class="mt-6 text-center text-sm text-gray-500">
+  Already have an account?
+  <a routerLink="/auth/login" class="font-medium text-gray-900 hover:underline">Log in</a>
+</p>

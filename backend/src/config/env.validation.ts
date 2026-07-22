@@ -6,6 +6,7 @@ import {
   IsString,
   IsUrl,
   Max,
+  MinLength,
   Min,
   validateSync,
 } from 'class-validator';
@@ -41,6 +42,31 @@ class EnvironmentVariables {
 
   @IsUrl({ protocols: ['redis', 'rediss'], require_tld: false })
   REDIS_URL: string;
+
+  // --- Auth (docs/AUTHENTICATION.md) ---
+  // Two independent secrets by design: ACCESS signs/verifies the JWT access
+  // token; REFRESH peppers the HMAC used to hash the opaque refresh token
+  // before it's stored (never a JWT signing key) — compromise of one never
+  // compromises the other.
+  @IsString()
+  @MinLength(32)
+  JWT_ACCESS_SECRET: string;
+
+  @IsString()
+  @IsOptional()
+  JWT_ACCESS_EXPIRES_IN: string = '15m';
+
+  @IsInt()
+  @IsOptional()
+  JWT_ACCESS_EXPIRES_IN_SECONDS: number = 900;
+
+  @IsString()
+  @MinLength(32)
+  JWT_REFRESH_SECRET: string;
+
+  @IsInt()
+  @IsOptional()
+  JWT_REFRESH_EXPIRES_IN_SECONDS: number = 60 * 60 * 24 * 30;
 }
 
 /**

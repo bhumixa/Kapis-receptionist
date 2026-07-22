@@ -1,10 +1,21 @@
 // Prisma schema — see docs/PRISMA_SCHEMA.md for the full design.
 //
-// Milestone 1 scope only: the "global reference data" migration batch
-// (docs/PRISMA_SCHEMA.md Section 14.2, step 1) — Role, Permission,
-// RolePermission, Plan. Every other domain's models are added in the
-// milestone that implements them, each as its own migration, per the
-// documented migration order.
+// Milestone 1: the "global reference data" migration batch (docs/
+// PRISMA_SCHEMA.md Section 14.2, step 1) — Role, Permission, RolePermission,
+// Plan.
+//
+// Milestone 2, Sprint 2.1.1 (Identity Foundation, docs/AUTH_SCHEMA_REVIEW.md,
+// docs/adr/ADR-002-authentication-schema.md): User, UserRole, RefreshToken,
+// EmailVerification, PasswordReset, plus a minimal Tenant (schema only — no
+// TenantSettings/TenantFeature or Tenants-module business logic, those remain
+// Milestone 3 scope) and TenantInvitation, pulled forward ahead of Milestone
+// 3 specifically to unblock Sprint 2.2's invitation-acceptance endpoint.
+//
+// Every other domain's models are added in the milestone that implements
+// them, each as its own migration, per the documented migration order.
+// Relations to models that don't exist yet are deferred the same way —
+// added to the *existing* model when the other side is introduced, never
+// declared as a forward reference to a model that isn't in this file.
 
 generator client {
   provider        = "prisma-client-js"
@@ -26,9 +37,56 @@ enum RoleName {
   STAFF
 }
 
+enum ActorType {
+  USER
+  AI
+  SYSTEM
+  CUSTOMER
+}
+
+enum TenantStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  SUSPENDED
+  CANCELLED
+}
+
 // --- Authentication Models (docs/PRISMA_SCHEMA.md Section 3) ---------------
-// User/UserRole are deferred to Milestone 2 (Identity, migration order step 4)
-// — Role/Permission/RolePermission have no dependency on them.
+
+model User {
+  id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId         String?    @db.Uuid
+  email            String     @unique @db.VarChar(255)
+  passwordHash     String?    @db.VarChar(255)
+  firstName        String     @db.VarChar(100)
+  lastName         String     @db.VarChar(100)
+  googleId         String?    @unique @db.VarChar(255)
+  isEmailVerified  Boolean    @default(false)
+  isActive         Boolean    @default(true)
+  lastLoginAt      DateTime?
+  twoFactorEnabled Boolean    @default(false)
+  twoFactorSecret  String?    @db.VarChar(255)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  deletedAt        DateTime?
+  deletedByType    ActorType?
+  deletedById      String?    @db.Uuid
+
+  // Relations deferred to their owning milestone (docs/AUTH_SCHEMA_REVIEW.md
+  // Section 4): employee (M4), auditLogs/activityLogs/apiKeysCreated (M9),
+  // customerNotesAuthored/filesUploaded (M4), assignedConversations/
+  // messagesSent (M6), notifications (M9).
+  tenant             Tenant?             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  roles              UserRole[]
+  sessions           RefreshToken[]
+  passwordResets     PasswordReset[]
+  emailVerifications EmailVerification[]
+  invitationsSent    TenantInvitation[]  @relation("InvitedBy")
+
+  @@index([tenantId], name: "idx_users_tenant_id")
+  @@map("users")
+}
 
 model Role {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -38,6 +96,8 @@ model Role {
   updatedAt   DateTime @updatedAt
 
   permissions RolePermission[]
+  users       UserRole[]
+  invitations TenantInvitation[]
 
   @@map("roles")
 }
@@ -65,6 +125,133 @@ model RolePermission {
   @@unique([roleId, permissionId], name: "uq_role_permissions_role_permission")
   @@index([permissionId], name: "idx_role_permissions_permission_id")
   @@map("role_permissions")
+}
+
+model UserRole {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @db.Uuid
+  roleId    String   @db.Uuid
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, roleId], name: "uq_user_roles_user_role")
+  @@index([roleId], name: "idx_user_roles_role_id")
+  @@map("user_roles")
+}
+
+model RefreshToken {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId            String?   @db.Uuid
+  userId              String    @db.Uuid
+  refreshTokenHash    String    @unique @db.VarChar(255)
+  userAgent           String?   @db.VarChar(255)
+  ipAddress           String?   @db.VarChar(45)
+  expiresAt           DateTime
+  revokedAt           DateTime?
+  replacedBySessionId String?   @db.Uuid
+  createdAt           DateTime  @default(now())
+
+  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Self-referential rotation chain (docs/PRISMA_SCHEMA.md Section 3.1): the
+  // old row is never deleted on rotation, only linked forward. onDelete is
+  // explicit SetNull (not left to Prisma's implicit default for an optional
+  // relation) so a pruned successor row breaks the forward pointer instead of
+  // blocking the expiry-cleanup job's delete.
+  replacedBySession RefreshToken?  @relation("TokenRotation", fields: [replacedBySessionId], references: [id], onDelete: SetNull)
+  rotatedFrom       RefreshToken[] @relation("TokenRotation")
+
+  @@index([userId], name: "idx_refresh_tokens_user_id")
+  @@index([expiresAt], name: "idx_refresh_tokens_expires_at")
+  @@map("refresh_tokens")
+}
+
+model EmailVerification {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String?   @db.Uuid
+  userId     String    @db.Uuid
+  tokenHash  String    @unique @db.VarChar(255)
+  expiresAt  DateTime
+  verifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], name: "idx_email_verifications_user_id")
+  @@map("email_verifications")
+}
+
+model PasswordReset {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String?   @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique @db.VarChar(255)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], name: "idx_password_resets_user_id")
+  @@index([expiresAt], name: "idx_password_resets_expires_at")
+  @@map("password_resets")
+}
+
+// --- Tenant Models (docs/PRISMA_SCHEMA.md Section 4) -----------------------
+// Tenant is minimal — schema only (id/name/slug/status/timezone/address/
+// locale/trial/suspension/audit columns). TenantSettings, TenantFeature, and
+// every relation below other than `users`/`invitations` are deferred to
+// Milestone 3's Tenants module, which builds on this table rather than
+// creating it (docs/AUTH_SCHEMA_REVIEW.md Section 3, ADR-002). Pulled forward
+// from Milestone 3 specifically because User.tenantId and TenantInvitation
+// both require it to exist, and PRISMA_SCHEMA.md Section 14.2's own migration
+// order already places Tenant (step 2) before Identity (step 4).
+
+model Tenant {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String       @db.VarChar(255)
+  slug          String       @unique @db.VarChar(100)
+  status        TenantStatus @default(TRIAL)
+  timezone      String       @default("UTC") @db.VarChar(50)
+  addressLine1  String?      @db.VarChar(255)
+  addressLine2  String?      @db.VarChar(255)
+  city          String?      @db.VarChar(100)
+  countryCode   String?      @db.Char(2)
+  defaultLocale String       @default("en") @db.VarChar(10)
+  trialEndsAt   DateTime?
+  suspendedAt   DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  deletedAt     DateTime?
+
+  users       User[]
+  invitations TenantInvitation[]
+
+  @@index([status], name: "idx_tenants_status")
+  @@map("tenants")
+}
+
+model TenantInvitation {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String    @db.Uuid
+  email           String    @db.VarChar(255)
+  roleId          String    @db.Uuid
+  invitedByUserId String    @db.Uuid
+  tokenHash       String    @unique @db.VarChar(255)
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role      Role   @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  invitedBy User   @relation("InvitedBy", fields: [invitedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId], name: "idx_tenant_invitations_tenant_id")
+  @@index([email], name: "idx_tenant_invitations_email")
+  @@map("tenant_invitations")
 }
 
 // --- Billing Models (docs/PRISMA_SCHEMA.md Section 10) ---------------------

@@ -38,3 +38,23 @@ SYSTEM_ARCHITECTURE.md, PRISMA_SCHEMA.md, and FRONTEND_ARCHITECTURE.md were writ
 - Decision 4 means `schema.prisma` will grow substantially over Milestones 2–9; each addition should be a small, reviewable diff following the same documented order, not a large batch retrofit.
 - Decision 5 is a reminder that `npm install` succeeding is not sufficient evidence a dependency change is safe in this monorepo — `npm ci` (what Docker/CI actually run) must be verified too, ideally from a clean clone, not just a locally-patched `node_modules`.
 - Decision 6 means every future commit — starting with this repository's first — is already gated by the standard this project's own roadmap sets, rather than that gate being added reactively later.
+
+---
+
+## ADR-002: Authentication Schema (Identity Foundation)
+
+**Status:** Accepted
+**Date:** 2026-07-21
+**Milestone:** 2 — Authentication, Sprint 2.1.1
+
+Adds the Identity migration batch (`User`, `UserRole`, `RefreshToken`, `EmailVerification`, `PasswordReset`, `ActorType`/`TenantStatus` enums) and pulls a minimal, schema-only `Tenant` + `TenantInvitation` forward from Milestone 3 to satisfy `User.tenantId`'s FK and unblock Sprint 2.2's invitation-acceptance task — `Tenants`-module business logic (`TenantSettings`, `TenantFeature`, controllers/services) stays in Sprint 3.1 as planned. Full context, alternatives considered, and consequences: [docs/adr/ADR-002-authentication-schema.md](adr/ADR-002-authentication-schema.md).
+
+---
+
+## ADR-003: Core Authentication Implementation
+
+**Status:** Accepted
+**Date:** 2026-07-22
+**Milestone:** 2 — Authentication ("Core Authentication" sprint)
+
+Implements Register, Login, Logout, Refresh, and Get Current User end to end (backend + frontend), on top of ADR-002's schema — deliberately excluding email verification, password reset, Google OAuth, and RBAC enforcement, a narrower and differently-shaped scope than IMPLEMENTATION_ROADMAP.md §4's Sprint 2.1/2.2 originally specified. Notable decisions: the refresh token is an opaque, HMAC-peppered credential rather than a JWT; reuse detection distinguishes a token revoked by rotation (theft signal, triggers an all-device revoke) from one revoked by plain logout (a harmless dead session) — a real bug found and fixed during this sprint's own verification pass; `SecurityEventService` logs structurally rather than writing to a new, not-yet-scheduled `AuditLog` table. Full context, alternatives considered, and consequences: [docs/adr/ADR-003-core-authentication.md](adr/ADR-003-core-authentication.md); full technical reference: [docs/AUTHENTICATION.md](AUTHENTICATION.md), [docs/AUTH_FLOW.md](AUTH_FLOW.md).

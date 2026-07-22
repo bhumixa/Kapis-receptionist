@@ -2,6 +2,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import cookieParser from 'cookie-parser';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { validationExceptionFactory } from './common/pipes/validation-exception-factory';
@@ -21,6 +22,10 @@ async function bootstrap() {
     origin: configService.get<string>('app.corsOrigin'),
     credentials: true,
   });
+
+  // Required to read the httpOnly refresh-token cookie
+  // (SYSTEM_ARCHITECTURE.md Section 7.2) on /auth/refresh and /auth/logout.
+  app.use(cookieParser());
 
   app.useGlobalPipes(
     new ValidationPipe({

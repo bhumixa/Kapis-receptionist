@@ -7,9 +7,16 @@ import { ConfigModule } from './config/config.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { LoggerModule } from './logger/logger.module';
+import { AuthModule } from './modules/auth/auth.module';
 
 @Module({
-  imports: [ConfigModule, LoggerModule, DatabaseModule, HealthModule],
+  imports: [
+    ConfigModule,
+    LoggerModule,
+    DatabaseModule,
+    HealthModule,
+    AuthModule,
+  ],
   controllers: [],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
