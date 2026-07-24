@@ -53,5 +53,18 @@ import { EmployeesController } from './interface/employees.controller';
       useClass: PrismaEmployeeServiceRepository,
     },
   ],
+  // Milestone 6 (docs/adr/ADR-009-scheduling-engine.md): this module's first
+  // cross-module consumers — `modules/availability`/`modules/appointments`
+  // need `EmployeeService` (status/lookup), `WorkingHoursService` (weekly
+  // template), `EmployeeTimeOffService` (leave ranges), and
+  // `EmployeeAssignmentService` (eligible-employees-per-service) — mirrors
+  // `ServicesModule`'s existing `exports: [ServiceCategoryService,
+  // ServiceService]` precedent.
+  exports: [
+    EmployeeService,
+    WorkingHoursService,
+    EmployeeTimeOffService,
+    EmployeeAssignmentService,
+  ],
 })
 export class EmployeesModule {}

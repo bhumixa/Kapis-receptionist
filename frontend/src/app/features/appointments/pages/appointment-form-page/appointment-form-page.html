@@ -1,0 +1,196 @@
+<div class="max-w-3xl space-y-6">
+  <div>
+    <h1 class="text-xl font-semibold text-gray-900">New appointment</h1>
+    <p class="text-sm text-gray-500 mt-1">
+      Book one or more services, each with its own eligible employee.
+    </p>
+  </div>
+
+  @if (submitError(); as message) {
+    <div
+      class="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800"
+      role="alert"
+    >
+      {{ message }}
+    </div>
+  }
+
+  <form [formGroup]="form" (ngSubmit)="submit()" novalidate class="space-y-6">
+    <section>
+      <h2 class="text-base font-semibold text-gray-900 mb-2">Customer</h2>
+      @if (selectedCustomer(); as customer) {
+        <div class="flex items-center gap-3 rounded-md border border-gray-300 px-3 py-2 text-sm">
+          <span class="font-medium text-gray-900">
+            {{
+              (customer.firstName ?? '') + ' ' + (customer.lastName ?? '') || customer.phoneNumber
+            }}
+          </span>
+          <span class="text-gray-500">{{ customer.phoneNumber }}</span>
+          <button
+            type="button"
+            (click)="selectedCustomer.set(null)"
+            class="ml-auto text-gray-500 hover:underline"
+          >
+            Change
+          </button>
+        </div>
+      } @else {
+        <input
+          type="search"
+          placeholder="Search by name or phone..."
+          [value]="customerSearch()"
+          (input)="onCustomerSearchInput($any($event.target).value)"
+          class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+        />
+        @if (customerResults().length > 0) {
+          <ul class="mt-1 rounded-md border border-gray-200 divide-y divide-gray-100">
+            @for (customer of customerResults(); track customer.id) {
+              <li>
+                <button
+                  type="button"
+                  (click)="selectCustomer(customer)"
+                  class="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
+                >
+                  <span class="font-medium text-gray-900">
+                    {{
+                      (customer.firstName ?? '') + ' ' + (customer.lastName ?? '') ||
+                        customer.phoneNumber
+                    }}
+                  </span>
+                  <span class="text-gray-500 ml-2">{{ customer.phoneNumber }}</span>
+                </button>
+              </li>
+            }
+          </ul>
+        }
+      }
+    </section>
+
+    <section>
+      <h2 class="text-base font-semibold text-gray-900 mb-2">Date & time</h2>
+      <div class="flex gap-3 items-end">
+        <div>
+          <label for="apptDate" class="block text-sm font-medium text-gray-700 mb-1">Date</label>
+          <input
+            id="apptDate"
+            type="date"
+            formControlName="date"
+            class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+          />
+        </div>
+        <div>
+          <label for="apptTime" class="block text-sm font-medium text-gray-700 mb-1"
+            >Start time (UTC)</label
+          >
+          <input
+            id="apptTime"
+            type="time"
+            formControlName="time"
+            class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+          />
+        </div>
+        <button
+          type="button"
+          (click)="checkAvailability()"
+          [disabled]="isCheckingAvailability()"
+          class="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          {{ isCheckingAvailability() ? 'Checking...' : 'Suggest times' }}
+        </button>
+      </div>
+      @if (availabilitySlots().length > 0) {
+        <div class="mt-3 flex flex-wrap gap-2">
+          @for (slot of availabilitySlots(); track slot.startTime + slot.employeeId) {
+            <button
+              type="button"
+              (click)="pickSlot(slot)"
+              class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            >
+              {{ slot.startTime.slice(11, 16) }} · {{ slot.employeeName }}
+            </button>
+          }
+        </div>
+      }
+    </section>
+
+    <section>
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-base font-semibold text-gray-900">Services</h2>
+        <button
+          type="button"
+          (click)="addLine()"
+          class="text-sm font-medium text-gray-600 hover:underline"
+        >
+          + Add another service
+        </button>
+      </div>
+      <div formArrayName="lines" class="space-y-3">
+        @for (line of lines.controls; track line; let i = $index) {
+          <div [formGroupName]="i" class="grid grid-cols-5 gap-3 items-end">
+            <div class="col-span-2">
+              <label [for]="'lineService' + i" class="block text-sm font-medium text-gray-700 mb-1"
+                >Service</label
+              >
+              <select
+                [id]="'lineService' + i"
+                formControlName="serviceId"
+                (change)="onLineServiceChange(i, $any($event.target).value)"
+                class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              >
+                <option value="">Select a service...</option>
+                @for (service of services(); track service.id) {
+                  <option [value]="service.id">
+                    {{ service.name }} ({{ service.durationMinutes }}min)
+                  </option>
+                }
+              </select>
+            </div>
+            <div class="col-span-2">
+              <label [for]="'lineEmployee' + i" class="block text-sm font-medium text-gray-700 mb-1"
+                >Employee</label
+              >
+              <select
+                [id]="'lineEmployee' + i"
+                formControlName="employeeId"
+                class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              >
+                <option value="">Select an employee...</option>
+                @for (employee of employeeOptionsFor(i); track employee.id) {
+                  <option [value]="employee.id">
+                    {{ employee.firstName }} {{ employee.lastName }}
+                  </option>
+                }
+              </select>
+            </div>
+            <button
+              type="button"
+              (click)="removeLine(i)"
+              [disabled]="lines.length <= 1"
+              class="text-sm font-medium text-red-600 hover:underline disabled:opacity-30"
+            >
+              Remove
+            </button>
+          </div>
+        }
+      </div>
+    </section>
+
+    <section>
+      <label for="apptNotes" class="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+      <textarea
+        id="apptNotes"
+        formControlName="notes"
+        rows="2"
+        class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+      ></textarea>
+    </section>
+
+    <button
+      type="submit"
+      [disabled]="isSubmitting()"
+      class="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+    >
+      {{ isSubmitting() ? 'Booking...' : 'Book appointment' }}
+    </button>
+  </form>
+</div>

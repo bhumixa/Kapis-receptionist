@@ -50,5 +50,10 @@ import { SalonHolidaysController } from './interface/salon-holidays.controller';
     },
     { provide: HOLIDAY_REPOSITORY, useClass: PrismaHolidayRepository },
   ],
+  // Milestone 6 (docs/adr/ADR-009-scheduling-engine.md): `modules/
+  // availability` needs `BusinessHoursService` (salon-wide open hours) and
+  // `HolidayService` (tenant-wide closures) as inputs to slot computation —
+  // this module's first cross-module consumer.
+  exports: [BusinessHoursService, HolidayService],
 })
 export class SalonModule {}

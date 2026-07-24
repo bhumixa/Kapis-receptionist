@@ -364,6 +364,10 @@ ServiceDTO {
   updatedAt: datetime
 }
 
+// Amended, Milestone 6 (docs/adr/ADR-009-scheduling-engine.md) — as-built
+// shape: `preferredEmployeeId`/`tags` dropped (CustomerTag/CustomerPreference
+// not built this milestone, not requested); `updatedAt` added (standard on
+// every DTO in this codebase).
 CustomerDTO {
   id: uuid
   phoneNumber: string
@@ -371,26 +375,41 @@ CustomerDTO {
   lastName: string | null
   email: string | null
   preferredLanguage: string | null
-  preferredEmployeeId: uuid | null
   marketingOptIn: boolean
-  tags: { id: uuid, name: string, color: string | null }[]
   createdAt: datetime
+  updatedAt: datetime
 }
 
+// Amended, Milestone 6 — as-built shape: fields renamed to match the actual
+// snapshot columns (`*Snapshot`), and each line now carries its own
+// `[startTime, endTime)` sub-window + `bufferMinutesSnapshot`/`sequenceOrder`
+// — the per-service-employee-assignment decision (docs/adr/ADR-009) means
+// each line's employee performs their portion in sequence, not all at the
+// appointment's own single `startTime`.
 AppointmentServiceLineDTO {
+  id: uuid
   serviceId: uuid
-  serviceName: string            // snapshot at booking time
-  durationMinutes: integer       // snapshot
-  priceCents: integer            // snapshot
   employeeId: uuid
+  serviceNameSnapshot: string
+  durationMinutesSnapshot: integer
+  priceCentsSnapshot: integer
+  bufferMinutesSnapshot: integer
+  sequenceOrder: integer
+  startTime: datetime
+  endTime: datetime
 }
 
+// Amended, Milestone 6 — as-built shape: no embedded `customer`/`employeeName`
+// summary objects (the frontend resolves `customerId`/`employeeId` via their
+// own list/detail calls instead); `employeeId` is now a denormalized
+// "primary" value only (the first line's employee) — `services[].employeeId`
+// is authoritative. `conversationId` dropped — no `Conversation` model exists
+// until Milestone 7 (WhatsApp); `cancelledAt` added (present on the built
+// `Appointment` model).
 AppointmentDTO {
   id: uuid
   customerId: uuid
-  customer: { id: uuid, firstName: string | null, lastName: string | null, phoneNumber: string }
-  employeeId: uuid
-  employeeName: string
+  employeeId: uuid               // denormalized "primary" — see services[]
   status: AppointmentStatus
   startTime: datetime
   endTime: datetime
@@ -399,7 +418,7 @@ AppointmentDTO {
   services: AppointmentServiceLineDTO[]
   notes: string | null
   cancellationReason: string | null
-  conversationId: uuid | null
+  cancelledAt: datetime | null
   rescheduledFromAppointmentId: uuid | null
   createdAt: datetime
   updatedAt: datetime
@@ -990,6 +1009,8 @@ TenantSettingsDTO {
 
 Tag: `Customers`. Base path: `/api/v1/customers`. Tenant-scoped.
 
+**Built Milestone 6 (docs/adr/ADR-009-scheduling-engine.md)** — as designed below, with one narrowing: no `CustomerTag`/`preferredEmployeeId`/tag filter (`filter[tagId]`) — `CustomerTag`/`CustomerNote`/`CustomerPreference` were not built this milestone (not requested; see the ADR). `CustomerDTO` accordingly has no `tags` field.
+
 #### `GET /customers`
 **Purpose:** List the salon's customer records (DATABASE_DESIGN.md 3.4.1).
 **Auth:** Required. **Authorization:** `OWNER`, `MANAGER`, `STAFF`.
@@ -1035,7 +1056,9 @@ Tag: `Customers`. Base path: `/api/v1/customers`. Tenant-scoped.
 
 ## 10. Appointments Endpoints
 
-Tag: `Appointments`. Base path: `/api/v1/appointments`. Tenant-scoped. The highest-stakes resource group in the API (Critical-priority NFR, PROJECT_REQUIREMENTS.md Section 9) — every write endpoint here interacts with the booking-conflict-prevention mechanism designed in DATABASE_DESIGN.md Section 10.4/PRISMA_SCHEMA.md Section 14.4 (Redis lock + transactional check + `EXCLUDE` constraint backstop).
+Tag: `Appointments`. Base path: `/api/v1/appointments`. Tenant-scoped. The highest-stakes resource group in the API (Critical-priority NFR, PROJECT_REQUIREMENTS.md Section 9) — every write endpoint here interacts with the booking-conflict-prevention mechanism designed in DATABASE_DESIGN.md Section 10.4/PRISMA_SCHEMA.md Section 14.4 (Redis lock + transactional check + `EXCLUDE` constraint backstop) — built exactly as designed, see docs/SCHEDULING_ARCHITECTURE.md Section 3.
+
+**Amended, Milestone 6 (docs/adr/ADR-009-scheduling-engine.md) — per-service employee assignment (confirmed with requester):** this section's request/response bodies below are updated in place from the originally-drafted single-`employeeId` + bare `serviceIds[]` shape to a per-line `services: [{ serviceId, employeeId }]` array — a single visit may have different services performed by different employees in sequence, not one employee for the whole appointment. `AppointmentDTO.employeeId` is retained but is now a **denormalized "primary"** value (the first line's employee), never authoritative for conflict/availability — `AppointmentDTO.services[].employeeId` is. `GET /appointments/availability` is unchanged (still single-service, single-optional-employee — it answers "when is this one service/employee free", the booking-time per-line validation composes multiple such checks). `Idempotency-Key` (Section 2.13) and cursor pagination (Section 2.4.1) are both real, built mechanisms now (`core/idempotency/idempotency.interceptor.ts`, `common/utils/cursor-pagination.util.ts`), reused by `Customers` (Section 9) as well.
 
 **Authorization scoping note (applies to every endpoint below):** `OWNER`/`MANAGER` see and act on all appointments tenant-wide. `STAFF` is scoped to appointments where `employeeId` matches their own linked `Employee` record, per PROJECT_REQUIREMENTS.md Business Rule 11 — a `STAFF` request for another employee's appointment returns `403 FORBIDDEN` (not `404`, since the resource genuinely exists within the same tenant and a `404` would be misleading here, unlike the cross-tenant case in Section 2.3.1).
 
@@ -1059,18 +1082,20 @@ Tag: `Appointments`. Base path: `/api/v1/appointments`. Tenant-scoped. The highe
 **Purpose:** Create a new appointment (manual staff booking — the AI's equivalent action is the internal `POST /ai/tools/book`, Section 12, which shares this same underlying booking logic).
 **Auth:** Required. **Authorization:** `OWNER`, `MANAGER`, `STAFF`.
 **Headers:** `Idempotency-Key` **required** (Section 2.13).
-**Request Body:**
+**Request Body (amended, Milestone 6 — per-service employee assignment):**
 ```json
 {
   "customerId": "uuid",
-  "employeeId": "uuid",
   "startTime": "2026-08-03T14:00:00Z",
-  "serviceIds": ["uuid1", "uuid2"],
+  "services": [
+    { "serviceId": "uuid1", "employeeId": "uuidA" },
+    { "serviceId": "uuid2", "employeeId": "uuidB" }
+  ],
   "notes": "Customer prefers quiet chair."
 }
 ```
-**Validation Rules:** `customerId`/`employeeId`/every `serviceIds[]` entry must belong to the caller's tenant; every `serviceIds[]` entry must be in `EmployeeService` for the given `employeeId` (the employee must actually be eligible for each requested service, FR-11); `startTime` must be in the future and within `employeeId`'s computed availability (weighing `WorkingHours`, `EmployeeAvailability` overrides, `Holiday`, existing appointments, and `TenantSettings.bookingBufferMinutes`) — computed server-side, not trusted from a prior `GET /appointments/availability` call, since availability can change between the two requests; `endTime` is server-computed as `startTime + sum(service durations)`, never client-supplied.
-**Success — 201 Created:** `{ "success": true, "data": AppointmentDTO }` — an `AppointmentStatusHistory` row (`action: CREATED`, `actorType: USER`) is written in the same transaction (PRISMA_SCHEMA.md 7.1), and an `AppointmentReminder` row is scheduled per `TenantSettings.reminderHoursBefore`.
+**Validation Rules:** `customerId` and every line's `serviceId`/`employeeId` must belong to the caller's tenant (`422 INVALID_CUSTOMER_REFERENCE`/`INVALID_SERVICE_REFERENCE`/`INVALID_EMPLOYEE_REFERENCE`); each line's `employeeId` must be `ACTIVE` and eligible for that line's `serviceId` (via `EmployeeService`, FR-11); lines are scheduled **sequentially** starting at `startTime` (`line[i+1].startTime = line[i].endTime`, no gap within one visit) and each line's own window is validated against that employee's computed availability (`WorkingHours`, `EmployeeTimeOff`, `Holiday`, `BusinessHours`, existing bookings, and the buffer-composition rule — `max(service.bufferTimeMinutes, TenantSettings.business.bookingBufferMinutes)`, docs/SCHEDULING_ARCHITECTURE.md Section 4) — computed server-side, not trusted from a prior `GET /appointments/availability` call, since availability can change between the two requests; the appointment's overall `endTime` is the last line's computed `endTime`, never client-supplied.
+**Success — 201 Created:** `{ "success": true, "data": AppointmentDTO }` — an `AppointmentStatusHistory` row (`action: CREATED`, `actorType: USER`) is written in the same transaction (PRISMA_SCHEMA.md 7.1). **Amended, Milestone 6:** no `AppointmentReminder` row is scheduled — reminders are explicitly out of scope this milestone (docs/adr/ADR-009).
 **Errors:** `409 SLOT_NO_LONGER_AVAILABLE` (the specific, most important error this endpoint can return — the concurrent-booking race condition scenario, DATABASE_DESIGN.md Risk DB-R3, surfaced as a clear, actionable client error rather than a generic `409 CONFLICT`), `402 TENANT_SUSPENDED`, `422 VALIDATION_ERROR` (includes the "employee not eligible for service" and "outside business hours" cases as field-level `details`).
 **Rate Limit:** Booking-Critical. **Idempotency:** **Required.**
 **Example Response (201):** `{ "success": true, "data": { "id": "...", "status": "CONFIRMED", "startTime": "2026-08-03T14:00:00Z", "endTime": "2026-08-03T14:45:00Z", "totalPriceCents": 8000, ... } }`
@@ -1096,8 +1121,8 @@ Tag: `Appointments`. Base path: `/api/v1/appointments`. Tenant-scoped. The highe
 **Auth:** Required. **Authorization:** `OWNER`, `MANAGER`, `STAFF` (scoped).
 **Headers:** `Idempotency-Key` **required**.
 **Path Params:** `id`. **Request Body:** `{ "reason": "Customer requested via phone." }` (`reason` optional but recommended; always required when called internally by `POST /ai/tools/cancel` so the AI's stated reason is captured).
-**Validation Rules:** Appointment must currently be `PENDING` or `CONFIRMED` (cancelling an already-`CANCELLED`/`COMPLETED` appointment returns `409 INVALID_STATUS_TRANSITION`); if `startTime` is within `TenantSettings.cancellationNoticeHours` of `now()`, the cancellation is still **permitted** for a `MANAGER`/`OWNER` (staff override) but returns a `warnings` array in the response noting the late-cancellation policy breach for potential no-show-fee handling in a future phase (PROJECT_REQUIREMENTS.md Section 22, Q11 — cancellation-fee enforcement is explicitly out of scope for MVP, so this is surfaced as metadata only, never blocking).
-**Success — 200 OK:** `{ "success": true, "data": AppointmentDTO, "message": "Appointment cancelled." }` — `status` becomes `CANCELLED`, `cancelledAt`/`cancellationReason` set, `AppointmentStatusHistory` row written (`action: CANCELLED`), any pending `AppointmentReminder` rows for this appointment transition to `status: CANCELLED` so they never fire (PRISMA_SCHEMA.md 7.1).
+**Validation Rules:** Appointment must currently be `PENDING` or `CONFIRMED` (cancelling an already-`CANCELLED`/`COMPLETED` appointment returns `409 INVALID_STATUS_TRANSITION`); if `startTime` is within `TenantSettings.business.cancellationNoticeHours` of `now()` (default 24h), the cancellation is still **permitted regardless of role** but the response includes a `warnings` array noting the late-cancellation policy breach, for potential no-show-fee handling in a future phase (PROJECT_REQUIREMENTS.md Section 22, Q11 — cancellation-fee enforcement is explicitly out of scope for MVP, so this is surfaced as metadata only, never blocking). **Amended, Milestone 6:** confirmed with the requester as never-blocking for *any* role, not staff-override-only as originally drafted.
+**Success — 200 OK:** `{ "success": true, "data": { ...AppointmentDTO, "warnings": string[], "message": "Appointment cancelled." } }` — **amended, Milestone 6:** `warnings`/`message` are nested inside `data` alongside the appointment fields (this codebase's established response-shape convention for action endpoints — the global response interceptor never hoists a `message` field out of a controller's return value), not siblings of `data` as the envelope in Section 2.2 might otherwise suggest. `status` becomes `CANCELLED`, `cancelledAt`/`cancellationReason` set, `AppointmentStatusHistory` row written (`action: CANCELLED`), every one of the appointment's `AppointmentService` lines' `isBlocking` flips to `false` (freeing the slot). No `AppointmentReminder` rows exist to cancel — out of scope this milestone.
 **Errors:** `403 FORBIDDEN`, `404 NOT_FOUND`, `409 INVALID_STATUS_TRANSITION`.
 **Rate Limit:** Booking-Critical. **Idempotency:** **Required** — critically important here specifically, since a duplicate cancel call is harmless in effect but a duplicate *reschedule* or *book* call is not; required uniformly across all three for consistency and because the AI orchestration layer (Section 12) may legitimately retry any of the three after a timeout.
 
@@ -1105,9 +1130,9 @@ Tag: `Appointments`. Base path: `/api/v1/appointments`. Tenant-scoped. The highe
 **Purpose:** Move an appointment to a new time/employee (FR-9) — implemented as creating a **new** `Appointment` row linked via `rescheduledFromAppointmentId` and marking the original `RESCHEDULED`, per DATABASE_DESIGN.md Section 9.2's explicit "two linked rows, not an in-place mutation" design.
 **Auth:** Required. **Authorization:** `OWNER`, `MANAGER`, `STAFF` (scoped).
 **Headers:** `Idempotency-Key` **required**.
-**Path Params:** `id` (the appointment being rescheduled). **Request Body:** `{ "newStartTime": "2026-08-05T10:00:00Z", "newEmployeeId": "uuid | null" }` (`newEmployeeId` optional — omit to keep the same employee).
-**Validation Rules:** same availability/eligibility checks as `POST /appointments`, evaluated against the **new** slot; same `cancellationNoticeHours` warning behavior as `POST .../cancel` applied to the **original** appointment's proximity to `now()`; original appointment must be `PENDING`/`CONFIRMED`.
-**Success — 200 OK:** `{ "success": true, "data": { "originalAppointment": AppointmentDTO, "newAppointment": AppointmentDTO }, "message": "Appointment rescheduled." }` — original's `status` becomes `RESCHEDULED`, new row created with `rescheduledFromAppointmentId` set, both linked via `AppointmentStatusHistory` (`action: RESCHEDULED`) referencing each other in `newState`/`previousState` JSON.
+**Path Params:** `id` (the appointment being rescheduled). **Request Body (amended, Milestone 6):** `{ "newStartTime": "2026-08-05T10:00:00Z", "services": [{ "serviceId": "uuid", "employeeId": "uuid" }] }` — `services` optional; omit entirely to keep the original appointment's existing per-line service/employee assignments, shifted to the new start time. Provide it to also reassign employees per line (the original single, nullable `newEmployeeId` no longer applies now that assignment is per-service, not per-appointment).
+**Validation Rules:** same availability/eligibility checks as `POST /appointments`, evaluated against the **new** slot per line; same `cancellationNoticeHours` warning behavior as `POST .../cancel` applied to the **original** appointment's proximity to `now()`; original appointment must be `PENDING`/`CONFIRMED`.
+**Success — 200 OK:** `{ "success": true, "data": { "originalAppointment": AppointmentDTO, "newAppointment": AppointmentDTO, "warnings": string[], "message": "Appointment rescheduled." } }` — original's `status` becomes `RESCHEDULED` and its lines' `isBlocking` flips to `false`; new row created with `rescheduledFromAppointmentId` set; both linked via an `AppointmentStatusHistory` row each (`action: RESCHEDULED`) referencing the other appointment's id in `newState`/`previousState` JSON.
 **Errors:** `403 FORBIDDEN`, `404 NOT_FOUND`, `409 SLOT_NO_LONGER_AVAILABLE`, `409 INVALID_STATUS_TRANSITION`, `422 VALIDATION_ERROR`.
 **Rate Limit:** Booking-Critical. **Idempotency:** **Required.**
 
@@ -1210,7 +1235,7 @@ Tag: `AI`. Base path: `/api/v1/ai`.
 **Purpose:** Internal tool-execution endpoint mirroring `POST /appointments/:id/reschedule` (Section 10), with AI/customer actor attribution.
 **Auth:** Internal service credential only.
 **Headers:** `Idempotency-Key` **required**.
-**Request Body:** `{ "appointmentId": "uuid", "newStartTime": "...", "newEmployeeId": "uuid | null", "conversationId": "uuid", "actorType": "AI" | "CUSTOMER" }`
+**Request Body:** `{ "appointmentId": "uuid", "newStartTime": "...", "services": [{ "serviceId": "uuid", "employeeId": "uuid" }] | undefined, "conversationId": "uuid", "actorType": "AI" | "CUSTOMER" }` — **forward-compat note (Milestone 6, docs/adr/ADR-009):** `newEmployeeId` renamed/reshaped to the same per-line `services` array `POST /appointments/:id/reschedule` (Section 10) now actually takes; this endpoint remains design-only (no `modules/ai` exists yet) but should match Section 10's real shape when Milestone 8 builds it, not this document's pre-Milestone-6 draft.
 **Success — 200 OK:** Same shape as `POST /appointments/:id/reschedule`.
 **Errors:** Same as `POST /appointments/:id/reschedule`, plus `422 GUARDRAIL_REJECTED`.
 **Rate Limit:** Not separately limited (internal). **Idempotency:** **Required.**
@@ -1405,7 +1430,7 @@ The `Idempotency-Key` header (Section 2.13) is modeled as a `components.paramete
 
 ### 18.1 Endpoint Coverage Summary
 
-65 endpoints across 13 domains, exactly matching the requested list: Authentication (9), Users (5), Tenant (4), Employees (5), Services (5), Customers (5), Appointments (8), WhatsApp (6), AI (5), Billing (5), Notifications (2), Dashboard (3), Admin (3). **As-built after Milestone 3 (docs/adr/ADR-006):** Authentication gained `POST /auth/accept-invitation` (10); Tenant gained `POST/GET/DELETE /tenant/invitations*` (7); Admin's original 3 became `GET /admin/tenants` + 2 lifecycle actions built, `GET /admin/users`/`GET /admin/system` still design-only (Section 16). Users' original 5 (staff CRUD) remain entirely unbuilt. **As-built after Milestone 4 (docs/adr/ADR-007-salon-management.md):** new `Salon` domain built — `GET/PATCH /salon`, `GET/PUT /salon/business-hours`, `GET/POST/PATCH/DELETE /salon/holidays[/:id]` (8 endpoints, Section 6a) — not part of this document's original 65-endpoint request, added per the requester's explicit Milestone 4 scope. Employees/Services/Customers remain entirely unbuilt as of Milestone 4 (deferred to the renumbered Milestone 5, docs/IMPLEMENTATION_ROADMAP.md).
+65 endpoints across 13 domains, exactly matching the requested list: Authentication (9), Users (5), Tenant (4), Employees (5), Services (5), Customers (5), Appointments (8), WhatsApp (6), AI (5), Billing (5), Notifications (2), Dashboard (3), Admin (3). **As-built after Milestone 3 (docs/adr/ADR-006):** Authentication gained `POST /auth/accept-invitation` (10); Tenant gained `POST/GET/DELETE /tenant/invitations*` (7); Admin's original 3 became `GET /admin/tenants` + 2 lifecycle actions built, `GET /admin/users`/`GET /admin/system` still design-only (Section 16). Users' original 5 (staff CRUD) remain entirely unbuilt. **As-built after Milestone 4 (docs/adr/ADR-007-salon-management.md):** new `Salon` domain built — `GET/PATCH /salon`, `GET/PUT /salon/business-hours`, `GET/POST/PATCH/DELETE /salon/holidays[/:id]` (8 endpoints, Section 6a) — not part of this document's original 65-endpoint request, added per the requester's explicit Milestone 4 scope. Employees/Services/Customers remain entirely unbuilt as of Milestone 4 (deferred to the renumbered Milestone 5, docs/IMPLEMENTATION_ROADMAP.md). **As-built after Milestone 5 (docs/adr/ADR-008-workforce-and-service-catalog.md):** `Employees` (5 endpoints + `PUT /employees/:id/working-hours`, `GET/POST/DELETE /employees/:id/time-off[/:id]`, `PUT /employees/:id/services` — 10 total) and `Services`/`ServiceCategories` (5 + `service-categories` CRUD — 9 total) built; `Customers` still deferred, per the requester's narrower Milestone 5 brief. **As-built after Milestone 6 (docs/adr/ADR-009-scheduling-engine.md):** `Customers` (5 endpoints, Section 9) and `Appointments` (8 endpoints, Section 10, with the per-service-employee-assignment body-shape amendment noted there) both built, closing out this document's original 13-domain, 65-endpoint core-CRUD scope entirely except `WhatsApp`/`AI`/`Billing` (Milestones 7–9) and `Users`' staff-CRUD surface (still open).
 
 ### 18.2 Gaps Identified During This Design (Flagged, Not Silently Filled)
 

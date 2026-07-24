@@ -596,6 +596,7 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 **Business Rules:** `findOrCreateByPhone` (SYSTEM_ARCHITECTURE.md `Customers` module) is the canonical creation path — a new inbound WhatsApp message from an unrecognized number creates this row automatically.
 **Expected Row Growth:** The largest catalog-type table by tenant — potentially hundreds to thousands per active salon; at 10,000 tenants, millions of rows total.
 **Frequently Queried Columns:** `(tenant_id, phone_number)` — the single hottest lookup in the entire system (every inbound WhatsApp message).
+**Amended, Milestone 6 (docs/adr/ADR-009-scheduling-engine.md):** built as a narrower subset of this design — no `preferred_employee_id`, and no `CustomerNote`/`CustomerTag`/`CustomerPreference` tables at all (not requested; only "Customer CRUD" was asked for). No `created_by_type`/`created_by_id`/`updated_by_type`/`updated_by_id` columns — mirrors the as-built `Employee`/`Service` precedent (Milestone 5 dropped these); `findOrCreateByPhone` does not exist yet either — every row this milestone creates goes through `POST /customers` (staff-entered), since no WhatsApp integration exists until Milestone 7. The partial unique constraint is exactly as designed here.
 
 ---
 
@@ -666,6 +667,7 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 **Business Rules:** No two `CONFIRMED`/`PENDING` appointments for the same `employee_id` may have overlapping `[start_time, end_time)` ranges within a tenant — enforced at the application layer inside a database transaction (an `EXCLUDE` constraint using the `btree_gist` extension is a viable future hardening option, flagged in Section 13, but application-layer enforcement plus a Redis booking lock (Section 10) is the MVP approach for compatibility with Prisma's constraint modeling). Cancelling/rescheduling within `cancellation_notice_hours` (from `TenantSettings`) is a business-rule check, not a schema constraint.
 **Expected Row Growth:** The highest-volume core-business table — Section 12 models this explicitly (targeting 1M+ rows).
 **Frequently Queried Columns:** `(tenant_id, employee_id, start_time)`, `(tenant_id, status, start_time)`, `customer_id`.
+**Amended, Milestone 6 (docs/adr/ADR-009-scheduling-engine.md) — per-service employee assignment (confirmed with requester):** `employee_id` is built exactly as designed here, but its *meaning* is narrowed to a **denormalized "primary"** value only (the first `sequence_order` line's employee, for simple `filter[employeeId]` queries and calendar display) — it is never authoritative for conflict prevention or availability. A single visit may have different services performed by different employees in sequence; `appointment_services` (3.5.2) is where the real per-line employee assignment and conflict-prevention unit live. `reminder_sent_at` does not exist — `AppointmentReminder` was not built this milestone (no notifications beyond scheduling, per the requester's explicit brief). **The "no unique constraint prevents double-booking... application layer plus a Redis booking lock" business rule above is built exactly as specified, with the EXCLUDE constraint (also specified here as a "future hardening option") built now, not deferred** — see docs/SCHEDULING_ARCHITECTURE.md Section 3 for the full two-layer mechanism, scoped to `appointment_services` rather than `appointments` itself (a consequence of the per-service-employee-assignment decision above).
 
 ---
 
@@ -689,6 +691,7 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 **Business Rules:** `appointment.total_price_cents` and `appointment.end_time` are derived from the sum/max of this table's rows at creation time — any change to an appointment's services requires recomputing and updating those denormalized parent fields within the same transaction.
 **Expected Row Growth:** Slightly higher than `appointments` (multi-service visits produce >1 row per appointment).
 **Frequently Queried Columns:** `appointment_id`.
+**Amended, Milestone 6 (docs/adr/ADR-009-scheduling-engine.md):** built with four additional columns beyond this design — `buffer_minutes_snapshot` (the effective buffer computed at booking time, `max(service.bufferTimeMinutes, tenantSettings.business.bookingBufferMinutes)`), `start_time`/`end_time` (this line's own computed sub-window — sequential within the visit, per the per-service-employee-assignment decision), and `blocked_until`/`is_blocking` (the fields the two-layer conflict-prevention mechanism, docs/SCHEDULING_ARCHITECTURE.md Section 3, actually keys on). These exist because each line, not the parent `appointment`, is now the independently-blocking unit — a consequence of confirming that different services in one visit may be performed by different employees, which this design (written before that confirmation) did not anticipate.
 
 ---
 
@@ -713,6 +716,7 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 **Business Rules:** Rows are never updated or deleted (application enforces insert-only access at the repository layer, per SYSTEM_ARCHITECTURE.md 9.6's audit-log tamper-evidence principle). Every `appointments` mutation must write a corresponding row in the same transaction.
 **Expected Row Growth:** ≥ 1:1 with appointment mutations — likely 1.5–3× the row count of `appointments` given reschedules/cancellations. Prime candidate for time-based partitioning at scale (Section 12).
 **Frequently Queried Columns:** `appointment_id`, `(tenant_id, created_at)`.
+**Amended, Milestone 6 (docs/adr/ADR-009-scheduling-engine.md):** built as `appointment_status_history` (matching PRISMA_SCHEMA.md's naming) without `ai_prompt_version`/`conversation_id` — no AI/WhatsApp integration exists until Milestones 7–8, so every row this milestone writes has `actor_type = USER`. Also built with a standard `gen_random_uuid()` primary key, not app-generated UUIDv7 as PRISMA_SCHEMA.md Section 1.5 recommends for this table — the same call already made for `audit_logs` (Milestone 3): not worth a new dependency at this milestone's volume, a deferred follow-up rather than an oversight.
 
 ---
 

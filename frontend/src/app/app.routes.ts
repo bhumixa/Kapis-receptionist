@@ -128,6 +128,48 @@ export const routes: Routes = [
           ),
       },
       {
+        // Milestone 6 (docs/adr/ADR-009-scheduling-engine.md). No
+        // tenantActiveGuard on reads/the calendar itself — mutations
+        // (create/cancel/reschedule) are gated server-side by
+        // TenantActiveGuard regardless, mirroring the salon/employees/
+        // services read-vs-write split.
+        path: 'customers',
+        canActivate: [roleGuard],
+        data: { roles: ['STAFF'] },
+        loadComponent: () =>
+          import('./features/customers/pages/customers-list-page/customers-list-page').then(
+            (m) => m.CustomersListPage,
+          ),
+      },
+      {
+        path: 'appointments',
+        canActivate: [roleGuard],
+        data: { roles: ['STAFF'] },
+        loadComponent: () =>
+          import('./features/appointments/pages/appointments-calendar-page/appointments-calendar-page').then(
+            (m) => m.AppointmentsCalendarPage,
+          ),
+      },
+      {
+        // Registered before 'appointments/:id' so 'new' is never matched as an :id.
+        path: 'appointments/new',
+        canActivate: [roleGuard],
+        data: { roles: ['STAFF'] },
+        loadComponent: () =>
+          import('./features/appointments/pages/appointment-form-page/appointment-form-page').then(
+            (m) => m.AppointmentFormPage,
+          ),
+      },
+      {
+        path: 'appointments/:id',
+        canActivate: [roleGuard],
+        data: { roles: ['STAFF'] },
+        loadComponent: () =>
+          import('./features/appointments/pages/appointment-detail-page/appointment-detail-page').then(
+            (m) => m.AppointmentDetailPage,
+          ),
+      },
+      {
         // TenantActiveGuard's own redirect target (Section 3.3's exemption
         // pattern) — deliberately not itself gated by tenantActiveGuard, or
         // a suspended tenant could never reach the page explaining why.

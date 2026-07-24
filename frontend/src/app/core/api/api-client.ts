@@ -8,6 +8,8 @@ import { ApiErrorEnvelope, ApiSuccessEnvelope } from './api-response';
 
 export interface ApiRequestOptions {
   params?: HttpParams | Record<string, string | number | boolean>;
+  /** Milestone 6: lets `AppointmentsApiService` attach `Idempotency-Key` on booking-critical writes (API_SPECIFICATION.md Section 2.13). */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -58,6 +60,7 @@ export class ApiClient {
     return this.http
       .post<ApiSuccessEnvelope<T>>(this.url(path), body, {
         params: options?.params,
+        headers: options?.headers,
         ...WITH_CREDENTIALS,
       })
       .pipe(

@@ -27,13 +27,40 @@ export class PrismaTenantSettingsRepository implements TenantSettingsRepositoryP
     return row ? toTenantSettingsEntity(row) : null;
   }
 
+  /**
+   * Concurrency-safe "create if missing" (surfaced by Milestone 6's
+   * concurrent-booking test, docs/adr/ADR-009-scheduling-engine.md — the
+   * first caller to invoke `getSettings` under genuine concurrent load,
+   * since a normally-registered tenant already has its `TenantSettings` row
+   * created atomically at `POST /auth/register`). `upsert()` alone is not
+   * a sufficient guard: two concurrent calls can both miss the row on their
+   * internal read and both attempt the insert branch, so the *second*
+   * still raises a `P2002` unique-constraint violation on `tenantId`
+   * despite being expressed as an upsert — caught here and treated as
+   * "someone else just created it", re-reading rather than crashing.
+   */
   async createDefault(tenantId: string): Promise<TenantSettingsEntity> {
-    const row = await this.prisma.tenantSettings.upsert({
-      where: { tenantId },
-      update: {},
-      create: { tenantId },
-    });
-    return toTenantSettingsEntity(row);
+    try {
+      const row = await this.prisma.tenantSettings.upsert({
+        where: { tenantId },
+        update: {},
+        create: { tenantId },
+      });
+      return toTenantSettingsEntity(row);
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const existing = await this.prisma.tenantSettings.findUnique({
+          where: { tenantId },
+        });
+        if (existing) {
+          return toTenantSettingsEntity(existing);
+        }
+      }
+      throw error;
+    }
   }
 
   async updateCategories(

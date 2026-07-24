@@ -68,6 +68,15 @@ import { TenantInvitationsController } from './interface/tenant-invitations.cont
       useClass: PrismaTenantInvitationRepository,
     },
   ],
-  exports: [TenantLifecycleService, TenantService, TenantInvitationService],
+  // Milestone 6 (docs/adr/ADR-009-scheduling-engine.md): `TenantSettingsService`
+  // is now also exported — `modules/availability` reads
+  // `TenantSettings.business` (the dormant JSON namespace's first real
+  // consumer) for `bookingBufferMinutes`/`cancellationNoticeHours`.
+  exports: [
+    TenantLifecycleService,
+    TenantService,
+    TenantInvitationService,
+    TenantSettingsService,
+  ],
 })
 export class TenantsModule {}

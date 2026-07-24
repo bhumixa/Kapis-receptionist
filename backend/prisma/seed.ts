@@ -47,6 +47,14 @@ const PERMISSIONS = [
     key: 'services:manage',
     description: 'Manage service categories and the service catalog',
   },
+  {
+    key: 'customers:manage',
+    description: 'Create, update, and remove customer records',
+  },
+  {
+    key: 'appointments:manage',
+    description: 'Create, reschedule, cancel, and hard-remove appointments',
+  },
 ] as const;
 
 const ROLE_PERMISSIONS: Record<RoleName, readonly string[]> = {
@@ -59,6 +67,8 @@ const ROLE_PERMISSIONS: Record<RoleName, readonly string[]> = {
     'salon:manage',
     'employees:manage',
     'services:manage',
+    'customers:manage',
+    'appointments:manage',
   ],
   [RoleName.STAFF]: [],
 };

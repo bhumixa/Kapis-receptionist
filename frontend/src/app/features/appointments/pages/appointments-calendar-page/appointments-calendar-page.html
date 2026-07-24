@@ -1,0 +1,107 @@
+<div class="space-y-6">
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-xl font-semibold text-gray-900">Appointments</h1>
+      <p class="text-sm text-gray-500 mt-1">Drag a card onto another day to reschedule it.</p>
+    </div>
+    <a
+      routerLink="/app/appointments/new"
+      class="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+    >
+      + New appointment
+    </a>
+  </div>
+
+  <div class="flex items-center gap-3">
+    <div class="inline-flex rounded-md border border-gray-300 overflow-hidden">
+      <button
+        type="button"
+        (click)="setViewMode('day')"
+        [class.bg-gray-900]="viewMode() === 'day'"
+        [class.text-white]="viewMode() === 'day'"
+        class="px-3 py-1.5 text-sm font-medium text-gray-700"
+      >
+        Day
+      </button>
+      <button
+        type="button"
+        (click)="setViewMode('week')"
+        [class.bg-gray-900]="viewMode() === 'week'"
+        [class.text-white]="viewMode() === 'week'"
+        class="px-3 py-1.5 text-sm font-medium text-gray-700 border-l border-gray-300"
+      >
+        Week
+      </button>
+    </div>
+    <button
+      type="button"
+      (click)="goPrevious()"
+      class="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+    >
+      &larr;
+    </button>
+    <button
+      type="button"
+      (click)="goToToday()"
+      class="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+    >
+      Today
+    </button>
+    <button
+      type="button"
+      (click)="goNext()"
+      class="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+    >
+      &rarr;
+    </button>
+  </div>
+
+  @if (isLoading()) {
+    <p class="text-sm text-gray-500">Loading...</p>
+  } @else {
+    <div
+      class="grid gap-3"
+      [style.grid-template-columns]="'repeat(' + dayColumns().length + ', minmax(180px, 1fr))'"
+    >
+      @for (column of dayColumns(); track column.dateKey) {
+        <div
+          class="rounded-md border border-gray-200 bg-white min-h-[16rem]"
+          (dragover)="$event.preventDefault()"
+          (drop)="onDrop(column.dateKey, $event)"
+        >
+          <div class="border-b border-gray-100 px-3 py-2 text-sm font-medium text-gray-700">
+            {{ column.label }}
+          </div>
+          <div class="p-2 space-y-2">
+            @for (appointment of column.appointments; track appointment.id) {
+              <a
+                [routerLink]="['/app/appointments', appointment.id]"
+                draggable="true"
+                (dragstart)="onDragStart(appointment.id, $event)"
+                (dragend)="onDragEnd()"
+                class="block rounded-md border border-gray-200 px-2 py-1.5 text-xs hover:shadow-sm cursor-grab active:cursor-grabbing"
+                [class.opacity-40]="draggingId() === appointment.id"
+              >
+                <div class="flex items-center gap-1.5">
+                  <span
+                    class="inline-block h-2 w-2 rounded-full shrink-0"
+                    [style.background-color]="employeeColor(appointment.employeeId)"
+                  ></span>
+                  <span class="font-medium text-gray-900">{{
+                    appointment.startTime.slice(11, 16)
+                  }}</span>
+                </div>
+                <div class="text-gray-700 truncate">{{ customerName(appointment.customerId) }}</div>
+                <div class="text-gray-500 truncate">{{ employeeName(appointment.employeeId) }}</div>
+                <div class="text-gray-400">{{ statusLabels[appointment.status] }}</div>
+              </a>
+            }
+            @if (column.appointments.length === 0) {
+              <p class="text-xs text-gray-400 px-1 py-2">No appointments</p>
+            }
+          </div>
+        </div>
+      }
+    </div>
+  }
+</div>

@@ -62,6 +62,20 @@ export class EmployeeService {
     return employee;
   }
 
+  /**
+   * Milestone 6 (docs/adr/ADR-009-scheduling-engine.md): `modules/
+   * appointments` needs this to resolve "which `Employee` is the current
+   * `STAFF` caller" for its own-appointments-only scoping rule
+   * (PROJECT_REQUIREMENTS.md Business Rule 11) — a thin passthrough over
+   * the repository's existing `findByUserIdForTenant`, not new logic.
+   */
+  async findByUserId(
+    tenantId: string,
+    userId: string,
+  ): Promise<EmployeeEntity | null> {
+    return this.employees.findByUserIdForTenant(tenantId, userId);
+  }
+
   async createEmployee(
     tenantId: string,
     actor: AccessTokenPayload,

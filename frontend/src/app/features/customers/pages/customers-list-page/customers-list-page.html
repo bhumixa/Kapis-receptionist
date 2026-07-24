@@ -1,0 +1,170 @@
+<div class="max-w-4xl space-y-6">
+  <div>
+    <h1 class="text-xl font-semibold text-gray-900">Customers</h1>
+    <p class="text-sm text-gray-500 mt-1">
+      Search customers or add a new one for a walk-in/phone booking.
+    </p>
+  </div>
+
+  <div>
+    <input
+      type="search"
+      placeholder="Search by name or phone..."
+      [value]="searchTerm()"
+      (input)="onSearchInput($any($event.target).value)"
+      class="w-full max-w-sm rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+    />
+  </div>
+
+  @if (canManageCustomers()) {
+    <section>
+      <h2 class="text-base font-semibold text-gray-900 mb-3">Add a customer</h2>
+      @if (createError(); as message) {
+        <div
+          class="mb-3 rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800"
+          role="alert"
+        >
+          {{ message }}
+        </div>
+      }
+      <form
+        [formGroup]="createForm"
+        (ngSubmit)="createCustomer()"
+        novalidate
+        class="grid grid-cols-4 gap-3 items-end"
+      >
+        <div>
+          <label for="custPhone" class="block text-sm font-medium text-gray-700 mb-1"
+            >Phone (E.164)</label
+          >
+          <input
+            id="custPhone"
+            type="tel"
+            placeholder="+15551234567"
+            formControlName="phoneNumber"
+            class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+          />
+        </div>
+        <div>
+          <label for="custFirstName" class="block text-sm font-medium text-gray-700 mb-1"
+            >First name</label
+          >
+          <input
+            id="custFirstName"
+            type="text"
+            formControlName="firstName"
+            class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+          />
+        </div>
+        <div>
+          <label for="custLastName" class="block text-sm font-medium text-gray-700 mb-1"
+            >Last name</label
+          >
+          <input
+            id="custLastName"
+            type="text"
+            formControlName="lastName"
+            class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+          />
+        </div>
+        <button
+          type="submit"
+          [disabled]="isCreating()"
+          class="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+        >
+          {{ isCreating() ? 'Adding...' : 'Add customer' }}
+        </button>
+      </form>
+    </section>
+  }
+
+  <section>
+    <h2 class="text-base font-semibold text-gray-900 mb-3">Customers</h2>
+    @if (isLoading()) {
+      <p class="text-sm text-gray-500">Loading...</p>
+    } @else if (customers().length === 0) {
+      <p class="text-sm text-gray-500">No customers found.</p>
+    } @else {
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-gray-500 border-b border-gray-200">
+            <th class="py-2 font-medium">Name</th>
+            <th class="py-2 font-medium">Phone</th>
+            <th class="py-2 font-medium">Email</th>
+            <th class="py-2"></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (customer of customers(); track customer.id) {
+            <tr class="border-b border-gray-100">
+              @if (editingId() === customer.id) {
+                <td class="py-2" colspan="3">
+                  <form [formGroup]="editForm" (ngSubmit)="saveEdit(customer)" class="flex gap-2">
+                    <input
+                      type="text"
+                      formControlName="firstName"
+                      placeholder="First name"
+                      class="rounded-md border border-gray-300 px-2 py-1 text-sm w-32"
+                    />
+                    <input
+                      type="text"
+                      formControlName="lastName"
+                      placeholder="Last name"
+                      class="rounded-md border border-gray-300 px-2 py-1 text-sm w-32"
+                    />
+                    <input
+                      type="email"
+                      formControlName="email"
+                      placeholder="Email"
+                      class="rounded-md border border-gray-300 px-2 py-1 text-sm w-48"
+                    />
+                    <button type="submit" class="text-sm font-medium text-gray-900 hover:underline">
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      (click)="cancelEdit()"
+                      class="text-sm text-gray-500 hover:underline"
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                </td>
+              } @else {
+                <td class="py-2 font-medium text-gray-900">
+                  {{
+                    customer.firstName || customer.lastName
+                      ? customer.firstName + ' ' + (customer.lastName ?? '')
+                      : '—'
+                  }}
+                </td>
+                <td class="py-2">{{ customer.phoneNumber }}</td>
+                <td class="py-2">{{ customer.email ?? '—' }}</td>
+              }
+              <td class="py-2 text-right whitespace-nowrap">
+                @if (editingId() !== customer.id) {
+                  <button
+                    type="button"
+                    (click)="startEdit(customer)"
+                    class="text-sm font-medium text-gray-600 hover:underline mr-3"
+                  >
+                    Edit
+                  </button>
+                  @if (canManageCustomers()) {
+                    <button
+                      type="button"
+                      (click)="deleteCustomer(customer)"
+                      class="text-sm font-medium text-red-600 hover:underline"
+                    >
+                      Remove
+                    </button>
+                  }
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  </section>
+</div>

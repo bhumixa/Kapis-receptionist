@@ -1,7 +1,9 @@
 <div class="min-h-screen flex flex-col bg-gray-50">
   @if (impersonatedTenant(); as tenant) {
     <div class="bg-amber-500 px-6 py-2 text-sm text-amber-950 flex items-center justify-between">
-      <span>Acting as <strong>{{ tenant.name }}</strong> (Platform Admin)</span>
+      <span
+        >Acting as <strong>{{ tenant.name }}</strong> (Platform Admin)</span
+      >
       <button type="button" (click)="returnToMyAccount()" class="font-medium underline">
         Return to my account
       </button>
@@ -14,20 +16,41 @@
         <span class="text-sm text-gray-500">{{ tenant.name }}</span>
       }
       <nav class="flex items-center gap-4">
-        <a routerLink="/app/dashboard" class="text-sm font-medium text-gray-600 hover:text-gray-900">
+        <a
+          routerLink="/app/dashboard"
+          class="text-sm font-medium text-gray-600 hover:text-gray-900"
+        >
           Dashboard
         </a>
         <a routerLink="/app/salon" class="text-sm font-medium text-gray-600 hover:text-gray-900">
           Salon
         </a>
-        <a routerLink="/app/employees" class="text-sm font-medium text-gray-600 hover:text-gray-900">
+        <a
+          routerLink="/app/employees"
+          class="text-sm font-medium text-gray-600 hover:text-gray-900"
+        >
           Employees
         </a>
         <a routerLink="/app/services" class="text-sm font-medium text-gray-600 hover:text-gray-900">
           Services
         </a>
+        <a
+          routerLink="/app/customers"
+          class="text-sm font-medium text-gray-600 hover:text-gray-900"
+        >
+          Customers
+        </a>
+        <a
+          routerLink="/app/appointments"
+          class="text-sm font-medium text-gray-600 hover:text-gray-900"
+        >
+          Appointments
+        </a>
         @if (canViewSettings()) {
-          <a routerLink="/app/settings" class="text-sm font-medium text-gray-600 hover:text-gray-900">
+          <a
+            routerLink="/app/settings"
+            class="text-sm font-medium text-gray-600 hover:text-gray-900"
+          >
             Settings
           </a>
         }

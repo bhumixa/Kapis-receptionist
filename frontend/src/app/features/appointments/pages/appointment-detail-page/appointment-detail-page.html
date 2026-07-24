@@ -1,0 +1,118 @@
+<div class="max-w-2xl space-y-6">
+  <a routerLink="/app/appointments" class="text-sm text-gray-500 hover:underline"
+    >&larr; Back to calendar</a
+  >
+
+  @if (isLoading()) {
+    <p class="text-sm text-gray-500">Loading...</p>
+  } @else if (appointment(); as appt) {
+    <div>
+      <h1 class="text-xl font-semibold text-gray-900">Appointment</h1>
+      <p class="text-sm text-gray-500 mt-1">
+        {{ formatDateTime(appt.startTime) }} UTC &middot; {{ statusLabels[appt.status] }}
+      </p>
+    </div>
+
+    @if (actionError(); as message) {
+      <div
+        class="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800"
+        role="alert"
+      >
+        {{ message }}
+      </div>
+    }
+    @if (warnings().length > 0) {
+      <div class="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+        @for (warning of warnings(); track warning) {
+          <p>{{ warning }}</p>
+        }
+      </div>
+    }
+
+    <section class="rounded-md border border-gray-200 divide-y divide-gray-100">
+      @for (line of appt.services; track line.id) {
+        <div class="px-4 py-3 flex items-center justify-between text-sm">
+          <div>
+            <p class="font-medium text-gray-900">{{ line.serviceNameSnapshot }}</p>
+            <p class="text-gray-500">
+              {{ line.startTime.slice(11, 16) }} – {{ line.endTime.slice(11, 16) }}
+            </p>
+          </div>
+          <span class="text-gray-500">{{ (line.priceCentsSnapshot / 100).toFixed(2) }}</span>
+        </div>
+      }
+      <div class="px-4 py-3 flex items-center justify-between text-sm font-medium">
+        <span>Total</span>
+        <span>{{ appt.currency }} {{ (appt.totalPriceCents / 100).toFixed(2) }}</span>
+      </div>
+    </section>
+
+    @if (appt.notes) {
+      <p class="text-sm text-gray-600">{{ appt.notes }}</p>
+    }
+
+    <div class="flex gap-3">
+      @if (isCancellable) {
+        <button
+          type="button"
+          (click)="cancel()"
+          class="rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+        >
+          Cancel appointment
+        </button>
+        <button
+          type="button"
+          (click)="startReschedule()"
+          class="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+        >
+          Reschedule
+        </button>
+      }
+      @if (canDelete()) {
+        <button
+          type="button"
+          (click)="remove()"
+          class="text-sm font-medium text-red-600 hover:underline ml-auto"
+        >
+          Remove record
+        </button>
+      }
+    </div>
+
+    @if (isRescheduling()) {
+      <form
+        [formGroup]="rescheduleForm"
+        (ngSubmit)="submitReschedule()"
+        novalidate
+        class="rounded-md border border-gray-200 p-4 flex gap-3 items-end"
+      >
+        <div>
+          <label for="newDate" class="block text-sm font-medium text-gray-700 mb-1">New date</label>
+          <input
+            id="newDate"
+            type="date"
+            formControlName="date"
+            class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+          />
+        </div>
+        <div>
+          <label for="newTime" class="block text-sm font-medium text-gray-700 mb-1"
+            >New time (UTC)</label
+          >
+          <input
+            id="newTime"
+            type="time"
+            formControlName="time"
+            class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+          />
+        </div>
+        <button
+          type="submit"
+          class="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+        >
+          Confirm reschedule
+        </button>
+      </form>
+    }
+  }
+</div>

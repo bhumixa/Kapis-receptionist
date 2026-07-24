@@ -25,7 +25,13 @@ generator client {
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
-  extensions = [pgcrypto]
+  // btree_gist backs the Milestone 6 booking-conflict EXCLUDE constraint
+  // (docs/adr/ADR-009-scheduling-engine.md, PRISMA_SCHEMA.md Section 14.4's
+  // "booking conflict-prevention hardening" item) — declared here so
+  // `prisma migrate dev` emits `CREATE EXTENSION IF NOT EXISTS btree_gist`
+  // for us; the EXCLUDE constraint itself still needs a manual migration
+  // edit, since Prisma has no declarative syntax for it.
+  extensions = [pgcrypto, btree_gist]
 }
 
 // --- Enums (docs/PRISMA_SCHEMA.md Section 2) -------------------------------
@@ -58,6 +64,28 @@ enum EmployeeStatus {
   INACTIVE
 }
 
+// Milestone 6 (docs/adr/ADR-009-scheduling-engine.md): PENDING is reserved for
+// a future AI-initiated booking flow (Milestone 8) that may need staff
+// confirmation before a slot is held with full priority — every appointment
+// created this milestone (manual, staff-entered) goes straight to CONFIRMED.
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  RESCHEDULED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum AppointmentHistoryAction {
+  CREATED
+  RESCHEDULED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+  MODIFIED
+}
+
 // --- Authentication Models (docs/PRISMA_SCHEMA.md Section 3) ---------------
 
 model User {
@@ -83,14 +111,15 @@ model User {
   // Section 4): employee (M4), auditLogs/activityLogs/apiKeysCreated (M9),
   // customerNotesAuthored/filesUploaded (M4), assignedConversations/
   // messagesSent (M6), notifications (M9).
-  tenant             Tenant?             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  roles              UserRole[]
-  sessions           RefreshToken[]
-  passwordResets     PasswordReset[]
-  emailVerifications EmailVerification[]
-  invitationsSent    TenantInvitation[]  @relation("InvitedBy")
-  auditLogs          AuditLog[]
-  employee           Employee?
+  tenant                          Tenant?                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  roles                           UserRole[]
+  sessions                        RefreshToken[]
+  passwordResets                  PasswordReset[]
+  emailVerifications              EmailVerification[]
+  invitationsSent                 TenantInvitation[]         @relation("InvitedBy")
+  auditLogs                       AuditLog[]
+  employee                        Employee?
+  appointmentStatusHistoryActions AppointmentStatusHistory[]
 
   @@index([tenantId], name: "idx_users_tenant_id")
   @@map("users")
@@ -243,6 +272,8 @@ model Tenant {
   employees         Employee[]
   serviceCategories ServiceCategory[]
   services          Service[]
+  customers         Customer[]
+  appointments      Appointment[]
 
   @@index([status], name: "idx_tenants_status")
   @@map("tenants")
@@ -398,11 +429,13 @@ model Employee {
   deletedByType ActorType?
   deletedById   String?        @db.Uuid
 
-  tenant       Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user         User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
-  services     EmployeeService[]
-  workingHours WorkingHours[]
-  timeOff      EmployeeTimeOff[]
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user                User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  services            EmployeeService[]
+  workingHours        WorkingHours[]
+  timeOff             EmployeeTimeOff[]
+  appointments        Appointment[]
+  appointmentServices AppointmentService[]
 
   @@unique([tenantId, id], name: "uq_employees_tenant_id")
   @@index([tenantId, status], name: "idx_employees_tenant_status")
@@ -441,9 +474,10 @@ model Service {
   updatedAt         DateTime  @updatedAt
   deletedAt         DateTime?
 
-  tenant    Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  category  ServiceCategory?  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  employees EmployeeService[]
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category            ServiceCategory?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  employees           EmployeeService[]
+  appointmentServices AppointmentService[]
 
   @@unique([tenantId, id], name: "uq_services_tenant_id")
   @@index([tenantId, isActive], name: "idx_services_tenant_active")
@@ -502,6 +536,162 @@ model EmployeeTimeOff {
 
   @@index([tenantId, employeeId], name: "idx_employee_time_off_tenant_employee")
   @@map("employee_time_off")
+}
+
+// --- Customer Models (Milestone 6, docs/adr/ADR-009-scheduling-engine.md) --
+// Deliberately scoped down from PRISMA_SCHEMA.md's full Customer domain:
+// CustomerTag/CustomerNote/CustomerPreference are not built this milestone
+// (not requested — only "Customer CRUD" was asked for) and remain open for a
+// future pass, same "narrow the ask, log the deferral" precedent ADR-008 set
+// for Files/Customers itself. No createdByType/createdById/updatedByType/
+// updatedById columns — mirrors the as-built Employee/Service precedent
+// (Milestone 5 dropped these in favor of the dedicated audit trail; for
+// Appointment, AppointmentStatusHistory is that trail, so duplicating actor
+// attribution as plain columns here would be redundant, not defense in depth).
+
+model Customer {
+  id                String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String     @db.Uuid
+  phoneNumber       String     @db.VarChar(20)
+  firstName         String?    @db.VarChar(100)
+  lastName          String?    @db.VarChar(100)
+  email             String?    @db.VarChar(255)
+  preferredLanguage String?    @db.VarChar(10)
+  marketingOptIn    Boolean    @default(false)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+  deletedAt         DateTime?
+  deletedByType     ActorType?
+  deletedById       String?    @db.Uuid
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  appointments Appointment[]
+
+  // Plain (tenantId, phoneNumber) index here — the partial unique
+  // (`WHERE deletedAt IS NULL`) is a manual migration edit, docs/PRISMA_
+  // SCHEMA.md Section 14.4's established mechanism, since two rows may
+  // legitimately share a phone number once one is soft-deleted.
+  @@unique([tenantId, id], name: "uq_customers_tenant_id")
+  @@index([tenantId, phoneNumber], name: "idx_customers_tenant_phone")
+  @@map("customers")
+}
+
+// --- Appointment Models (Milestone 6, docs/adr/ADR-009-scheduling-engine.md,
+// docs/SCHEDULING_ARCHITECTURE.md) ------------------------------------------
+// Per-service employee assignment (confirmed decision, ADR-009): a single
+// visit can have different services performed by different employees in
+// sequence. Appointment.employeeId is therefore a *denormalized "primary"*
+// value (the first sequenceOrder line's employeeId — convenient for simple
+// `filter[employeeId]` queries and calendar display), never authoritative
+// for conflict/availability — AppointmentService rows are. Each
+// AppointmentService line carries its own computed [startTime, endTime)
+// sub-window (sequential, no gap, within one continuous visit) plus
+// `blockedUntil` (endTime + effective buffer) and `isBlocking` (kept in sync
+// with the parent Appointment's status in the same transaction) so the
+// database-level EXCLUDE constraint and the availability engine can operate
+// per employee-line rather than per whole-appointment.
+
+model Appointment {
+  id                           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId                     String            @db.Uuid
+  customerId                   String            @db.Uuid
+  employeeId                   String            @db.Uuid
+  status                       AppointmentStatus @default(CONFIRMED)
+  startTime                    DateTime
+  endTime                      DateTime
+  totalPriceCents              Int
+  currency                     String            @default("USD") @db.Char(3)
+  notes                        String?           @db.Text
+  cancellationReason           String?           @db.VarChar(255)
+  cancelledAt                  DateTime?
+  rescheduledFromAppointmentId String?           @db.Uuid
+  createdAt                    DateTime          @default(now())
+  updatedAt                    DateTime          @updatedAt
+  deletedAt                    DateTime?
+  deletedByType                ActorType?
+  deletedById                  String?           @db.Uuid
+
+  tenant          Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer        Customer                   @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
+  employee        Employee                   @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+  // onDelete: Restrict, not SetNull — this is a composite FK sharing the
+  // required `tenantId` column with two other relations on this same row
+  // (customer/employee); SetNull would attempt to null `tenantId` itself,
+  // which is never valid (Prisma warns on this). Restrict is also the
+  // semantically correct choice: an appointment that's been rescheduled
+  // *into* should never be removable while the row it superseded still
+  // points at it.
+  rescheduledFrom Appointment?               @relation("RescheduleChain", fields: [tenantId, rescheduledFromAppointmentId], references: [tenantId, id], onDelete: Restrict)
+  rescheduledTo   Appointment[]              @relation("RescheduleChain")
+  services        AppointmentService[]
+  statusHistory   AppointmentStatusHistory[]
+
+  @@unique([tenantId, id], name: "uq_appointments_tenant_id")
+  @@index([tenantId, employeeId, startTime], name: "idx_appointments_tenant_employee_start")
+  @@index([tenantId, customerId], name: "idx_appointments_tenant_customer")
+  @@index([tenantId, status, startTime], name: "idx_appointments_tenant_status_start")
+  @@map("appointments")
+}
+
+model AppointmentService {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId                String   @db.Uuid
+  appointmentId           String   @db.Uuid
+  serviceId               String   @db.Uuid
+  employeeId              String   @db.Uuid
+  serviceNameSnapshot     String   @db.VarChar(150)
+  durationMinutesSnapshot Int
+  priceCentsSnapshot      Int
+  bufferMinutesSnapshot   Int      @default(0)
+  sequenceOrder           Int      @default(0) @db.SmallInt
+  startTime               DateTime
+  endTime                 DateTime
+  blockedUntil            DateTime
+  isBlocking              Boolean  @default(true)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  // appointmentId is a plain (non-composite) FK — this is parent/child
+  // ownership (same precedent as WorkingHours -> Employee), not a relation
+  // between two independent tenant-owned entities, so the composite-FK
+  // pattern doesn't apply here. service/employee ARE independent tenant-
+  // owned entities relative to this junction, so both use the composite-FK
+  // pattern (docs/TENANT_ARCHITECTURE.md Section 4.1).
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  service     Service     @relation(fields: [tenantId, serviceId], references: [tenantId, id], onDelete: Restrict)
+  employee    Employee    @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+
+  @@index([appointmentId], name: "idx_appointment_services_appointment_id")
+  @@index([serviceId], name: "idx_appointment_services_service_id")
+  @@index([tenantId, employeeId, startTime], name: "idx_appointment_services_tenant_employee_start")
+  @@map("appointment_services")
+}
+
+// Append-only (docs/PRISMA_SCHEMA.md Section 7.1 precedent) — no update/
+// delete call is ever made against this model. `id` uses standard
+// `gen_random_uuid()`, not app-generated UUIDv7 — this codebase already
+// made and documented this exact call for `AuditLog` ("not worth a new
+// dependency at this milestone's volume... a deferred follow-up, not an
+// oversight"); this table follows the same precedent rather than
+// introducing the only UUIDv7 dependency in the project for one more
+// table at comparable volume.
+model AppointmentStatusHistory {
+  id            String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId      String                   @db.Uuid
+  appointmentId String                   @db.Uuid
+  action        AppointmentHistoryAction
+  previousState Json?
+  newState      Json
+  actorType     ActorType
+  actorId       String?                  @db.Uuid
+  createdAt     DateTime                 @default(now())
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  actor       User?       @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([appointmentId], name: "idx_appointment_status_history_appointment_id")
+  @@index([tenantId, createdAt], name: "idx_appointment_status_history_tenant_created")
+  @@map("appointment_status_history")
 }
 
 // --- System / Audit Models (Milestone 3 pull-forward from Milestone 9;
