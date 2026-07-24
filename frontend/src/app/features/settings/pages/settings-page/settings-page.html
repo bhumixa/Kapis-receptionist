@@ -239,4 +239,104 @@
       }
     </section>
   }
+
+  <!-- WhatsApp connection (Milestone 7, docs/WHATSAPP_ARCHITECTURE.md) -->
+  @if (canManageWhatsApp()) {
+    <section>
+      <h2 class="text-base font-semibold text-gray-900 mb-1">WhatsApp</h2>
+      <p class="text-sm text-gray-500 mb-4">
+        Connect your salon's WhatsApp Business Cloud API number to send and receive messages.
+      </p>
+
+      @if (whatsappError(); as message) {
+        <div class="mb-4 rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800" role="alert">
+          {{ message }}
+        </div>
+      }
+
+      @if (isLoadingWhatsApp()) {
+        <p class="text-sm text-gray-500">Loading...</p>
+      } @else if (whatsappAccount(); as account) {
+        <div class="rounded-md border border-gray-200 p-4 space-y-2 text-sm">
+          <div class="flex items-center justify-between">
+            <span class="font-medium text-gray-900">{{ account.phoneNumber }}</span>
+            <span
+              class="rounded-full px-2 py-0.5 text-xs font-medium"
+              [class.bg-emerald-100]="account.connectionStatus === 'CONNECTED'"
+              [class.text-emerald-800]="account.connectionStatus === 'CONNECTED'"
+              [class.bg-gray-100]="account.connectionStatus !== 'CONNECTED'"
+              [class.text-gray-600]="account.connectionStatus !== 'CONNECTED'"
+            >
+              {{ account.connectionStatus }}
+            </span>
+          </div>
+          <p class="text-gray-500">Phone number ID: {{ account.whatsappPhoneNumberId }}</p>
+          <button
+            type="button"
+            (click)="disconnectWhatsApp()"
+            class="mt-2 rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+          >
+            Disconnect
+          </button>
+        </div>
+      } @else {
+        <form [formGroup]="connectWhatsAppForm" (ngSubmit)="connectWhatsApp()" novalidate class="space-y-4">
+          <div>
+            <label for="waPhoneNumber" class="block text-sm font-medium text-gray-700 mb-1"
+              >Phone number</label
+            >
+            <input
+              id="waPhoneNumber"
+              type="text"
+              formControlName="phoneNumber"
+              placeholder="+15551234567"
+              class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label for="waPhoneNumberId" class="block text-sm font-medium text-gray-700 mb-1"
+                >Phone number ID</label
+              >
+              <input
+                id="waPhoneNumberId"
+                type="text"
+                formControlName="whatsappPhoneNumberId"
+                class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              />
+            </div>
+            <div>
+              <label for="waBusinessAccountId" class="block text-sm font-medium text-gray-700 mb-1"
+                >Business account ID</label
+              >
+              <input
+                id="waBusinessAccountId"
+                type="text"
+                formControlName="whatsappBusinessAccountId"
+                class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              />
+            </div>
+          </div>
+          <div>
+            <label for="waAccessToken" class="block text-sm font-medium text-gray-700 mb-1"
+              >Access token</label
+            >
+            <input
+              id="waAccessToken"
+              type="password"
+              formControlName="accessToken"
+              class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+          </div>
+          <button
+            type="submit"
+            [disabled]="isConnectingWhatsApp()"
+            class="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+          >
+            {{ isConnectingWhatsApp() ? 'Connecting...' : 'Connect' }}
+          </button>
+        </form>
+      }
+    </section>
+  }
 </div>

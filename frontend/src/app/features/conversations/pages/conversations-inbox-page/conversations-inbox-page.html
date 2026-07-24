@@ -1,0 +1,190 @@
+<div class="flex h-[calc(100vh-160px)] gap-4">
+  <!-- Conversation list -->
+  <aside class="w-80 shrink-0 rounded-md border border-gray-200 bg-white overflow-y-auto">
+    <div class="px-4 py-3 border-b border-gray-100">
+      <h1 class="text-sm font-semibold text-gray-900">Conversations</h1>
+    </div>
+    @if (isLoadingList()) {
+      <p class="px-4 py-3 text-sm text-gray-500">Loading...</p>
+    } @else if (listError(); as message) {
+      <p class="px-4 py-3 text-sm text-red-700">{{ message }}</p>
+    } @else if (conversations().length === 0) {
+      <p class="px-4 py-3 text-sm text-gray-500">No conversations yet.</p>
+    } @else {
+      <ul class="divide-y divide-gray-100">
+        @for (conversation of conversations(); track conversation.id) {
+          <li>
+            <button
+              type="button"
+              (click)="select(conversation)"
+              class="w-full text-left px-4 py-3 hover:bg-gray-50"
+              [class.bg-gray-100]="selectedConversationId() === conversation.id"
+            >
+              <div class="flex items-center justify-between">
+                <span class="text-sm font-medium text-gray-900">
+                  {{ customerFor(conversation)?.firstName || customerFor(conversation)?.phoneNumber || 'Unknown customer' }}
+                </span>
+                <span class="text-xs text-gray-400">{{ formatTimestamp(conversation.lastMessageAt) }}</span>
+              </div>
+              <span
+                class="mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium"
+                [class.bg-emerald-100]="conversation.status === 'OPEN'"
+                [class.text-emerald-800]="conversation.status === 'OPEN'"
+                [class.bg-gray-100]="conversation.status !== 'OPEN'"
+                [class.text-gray-600]="conversation.status !== 'OPEN'"
+              >
+                {{ statusLabels[conversation.status] }}
+              </span>
+            </button>
+          </li>
+        }
+      </ul>
+    }
+  </aside>
+
+  <!-- Message thread -->
+  <section class="flex-1 flex flex-col rounded-md border border-gray-200 bg-white overflow-hidden">
+    @if (!selectedConversation()) {
+      <div class="flex-1 flex items-center justify-center text-sm text-gray-400">
+        Select a conversation to view messages.
+      </div>
+    } @else {
+      <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+        <div>
+          <p class="text-sm font-medium text-gray-900">
+            {{ selectedCustomer()?.firstName || selectedCustomer()?.phoneNumber }}
+          </p>
+          <p class="text-xs text-gray-500">{{ selectedCustomer()?.phoneNumber }}</p>
+        </div>
+        <div class="flex gap-2">
+          @if (selectedConversation()!.status !== 'RESOLVED') {
+            <button
+              type="button"
+              (click)="updateStatus('RESOLVED')"
+              class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Mark resolved
+            </button>
+          }
+          @if (selectedConversation()!.status !== 'CLOSED') {
+            <button
+              type="button"
+              (click)="updateStatus('CLOSED')"
+              class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Close
+            </button>
+          }
+          @if (selectedConversation()!.status !== 'OPEN') {
+            <button
+              type="button"
+              (click)="updateStatus('OPEN')"
+              class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Reopen
+            </button>
+          }
+        </div>
+      </div>
+
+      @if (statusUpdateError(); as message) {
+        <div class="mx-4 mt-3 rounded-md bg-red-50 border border-red-200 px-4 py-2 text-sm text-red-800">
+          {{ message }}
+        </div>
+      }
+
+      <div class="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+        @if (isLoadingMessages()) {
+          <p class="text-sm text-gray-500">Loading messages...</p>
+        } @else {
+          @for (message of messages(); track message.id) {
+            <div class="flex" [class.justify-end]="message.direction === 'OUTBOUND'">
+              <div
+                class="max-w-md rounded-lg px-3 py-2 text-sm"
+                [class.bg-gray-900]="message.direction === 'OUTBOUND'"
+                [class.text-white]="message.direction === 'OUTBOUND'"
+                [class.bg-gray-100]="message.direction === 'INBOUND'"
+                [class.text-gray-900]="message.direction === 'INBOUND'"
+              >
+                @if (message.content) {
+                  <p>{{ message.content }}</p>
+                } @else {
+                  <p class="italic opacity-75">[{{ message.messageType | lowercase }}]</p>
+                }
+                <p
+                  class="mt-1 text-xs opacity-70 flex items-center gap-1"
+                  [class.justify-end]="message.direction === 'OUTBOUND'"
+                >
+                  <span>{{ formatTimestamp(message.createdAt) }}</span>
+                  @if (message.direction === 'OUTBOUND') {
+                    <span>&middot; {{ messageStatusLabels[message.status] }}</span>
+                  }
+                </p>
+              </div>
+            </div>
+          }
+        }
+      </div>
+
+      <div class="border-t border-gray-100 px-4 py-3">
+        @if (sendError(); as message) {
+          <p class="mb-2 text-sm text-red-700">{{ message }}</p>
+        }
+        @if (!canReply()) {
+          <p class="text-xs text-gray-500">
+            More than 24 hours have passed since the customer's last message — a free-form reply
+            can't be sent until they message again.
+          </p>
+        } @else {
+          <form (ngSubmit)="send()" class="flex gap-2">
+            <input
+              type="text"
+              [(ngModel)]="composerText"
+              name="composerText"
+              placeholder="Type a reply..."
+              class="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+            <button
+              type="submit"
+              [disabled]="isSending() || !composerText().trim()"
+              class="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+            >
+              {{ isSending() ? 'Sending...' : 'Send' }}
+            </button>
+          </form>
+        }
+      </div>
+    }
+  </section>
+
+  <!-- Contact panel -->
+  @if (selectedConversation(); as conversation) {
+    <aside class="w-64 shrink-0 rounded-md border border-gray-200 bg-white p-4 space-y-3">
+      <h2 class="text-sm font-semibold text-gray-900">Contact</h2>
+      @if (selectedCustomer(); as customer) {
+        <dl class="text-sm space-y-2">
+          <div>
+            <dt class="text-gray-500">Name</dt>
+            <dd class="text-gray-900">
+              {{ (customer.firstName || '') + ' ' + (customer.lastName || '') || '—' }}
+            </dd>
+          </div>
+          <div>
+            <dt class="text-gray-500">Phone</dt>
+            <dd class="text-gray-900">{{ customer.phoneNumber }}</dd>
+          </div>
+          @if (customer.email) {
+            <div>
+              <dt class="text-gray-500">Email</dt>
+              <dd class="text-gray-900">{{ customer.email }}</dd>
+            </div>
+          }
+        </dl>
+      }
+      <div class="pt-2 border-t border-gray-100 text-xs text-gray-500 space-y-1">
+        <p>Status: {{ statusLabels[conversation.status] }}</p>
+        <p>Last message: {{ formatTimestamp(conversation.lastMessageAt) }}</p>
+      </div>
+    </aside>
+  }
+</div>

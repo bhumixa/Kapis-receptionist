@@ -126,6 +126,34 @@ class EnvironmentVariables {
   @IsInt()
   @IsOptional()
   TENANT_INVITATION_EXPIRES_IN_SECONDS: number = 60 * 60 * 24 * 7;
+
+  // --- WhatsApp Cloud API (Milestone 7, docs/WHATSAPP_ARCHITECTURE.md) ---
+  // WHATSAPP_APP_SECRET signs Meta's X-Hub-Signature-256 webhook header;
+  // WHATSAPP_VERIFY_TOKEN is the shared secret used only during the one-time
+  // GET /webhooks/whatsapp verification handshake. Both are per-Meta-App,
+  // not per-tenant (a tenant's own credentials — phone number ID, business
+  // account ID, access token — are stored on WhatsAppAccount, encrypted).
+  @IsString()
+  @MinLength(32)
+  WHATSAPP_APP_SECRET: string;
+
+  @IsString()
+  @MinLength(8)
+  WHATSAPP_VERIFY_TOKEN: string;
+
+  // AES-256-GCM key encrypting WhatsAppAccount.accessTokenEncrypted at rest
+  // (core/security/encryption.service.ts) — the first *decryptable* secret
+  // in this codebase (every other stored secret is one-way hashed). Must be
+  // exactly 32 bytes, base64-encoded (`openssl rand -base64 32`); validated
+  // for length here, decoded/length-checked again at EncryptionService
+  // construction so a malformed key fails at boot, not at first use.
+  @IsString()
+  @MinLength(44)
+  WHATSAPP_TOKEN_ENCRYPTION_KEY: string;
+
+  @IsUrl({ require_tld: false })
+  @IsOptional()
+  WHATSAPP_GRAPH_API_BASE_URL: string = 'https://graph.facebook.com/v21.0';
 }
 
 /**

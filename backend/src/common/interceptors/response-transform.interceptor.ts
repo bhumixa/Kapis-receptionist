@@ -33,6 +33,16 @@ export class ResponseTransformInterceptor<T> implements NestInterceptor<
       return next.handle() as unknown as Observable<SuccessResponse<T>>;
     }
 
+    // WhatsApp webhooks (Milestone 7, API_SPECIFICATION.md Section 11) are
+    // called by Meta, not this platform's own API client: the verification
+    // handshake must echo `hub.challenge` as raw text, and the inbound
+    // event receiver returns an empty `200` — neither fits the success
+    // envelope, and wrapping either would break Meta's webhook contract.
+    if (request.path.startsWith('/webhooks/whatsapp')) {
+      // (unprefixed — excluded from the `api/v1` prefix in main.ts, same as `/health`)
+      return next.handle() as unknown as Observable<SuccessResponse<T>>;
+    }
+
     return next.handle().pipe(
       map((result) =>
         isPaginatedPayload(result)

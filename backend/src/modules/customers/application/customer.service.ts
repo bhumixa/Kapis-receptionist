@@ -57,6 +57,53 @@ export class CustomerService {
     return this.customers.findByIdsForTenant(tenantId, ids);
   }
 
+  /**
+   * Contact synchronization for inbound WhatsApp messages (Milestone 7,
+   * `modules/whatsapp`'s `InboundMessageProcessorService`): finds the
+   * existing customer by phone number within the tenant, or creates one
+   * using the sender's WhatsApp profile display name as a first/last-name
+   * fallback. Deliberately does not overwrite an existing customer's name
+   * on every inbound message — a WhatsApp profile name is a hint at
+   * creation time only, not an authoritative ongoing sync source.
+   */
+  async findOrCreateByPhoneForTenant(
+    tenantId: string,
+    phoneNumber: string,
+    whatsappProfileName?: string | null,
+  ): Promise<CustomerEntity> {
+    const existing = await this.customers.findByPhoneForTenant(
+      tenantId,
+      phoneNumber,
+    );
+    if (existing) {
+      return existing;
+    }
+
+    try {
+      return await this.customers.create(tenantId, {
+        phoneNumber,
+        firstName: whatsappProfileName ?? null,
+      });
+    } catch (error) {
+      // Race-condition safety net, same pattern as `createCustomer`: another
+      // inbound message for the same brand-new customer could be
+      // processing concurrently.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === PRISMA_UNIQUE_VIOLATION
+      ) {
+        const conflicting = await this.customers.findByPhoneForTenant(
+          tenantId,
+          phoneNumber,
+        );
+        if (conflicting) {
+          return conflicting;
+        }
+      }
+      throw error;
+    }
+  }
+
   async createCustomer(
     tenantId: string,
     actor: AccessTokenPayload,

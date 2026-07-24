@@ -2,9 +2,11 @@ import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { TenantApiService } from '../../../../core/api/tenant-api.service';
+import { ConversationsApiService } from '../../../../core/api/conversations-api.service';
 import { ApiError } from '../../../../core/api/api-error';
 import { PermissionService } from '../../../../core/auth/permission.service';
 import { Invitation } from '../../../../shared/models/invitation.model';
+import { WhatsAppAccount } from '../../../../shared/models/whatsapp.model';
 import {
   TENANT_SETTINGS_CATEGORIES,
   TenantSettingsCategory,
@@ -28,11 +30,13 @@ import {
 export class SettingsPage {
   private readonly formBuilder = inject(FormBuilder);
   private readonly tenantApi = inject(TenantApiService);
+  private readonly conversationsApi = inject(ConversationsApiService);
   private readonly permissionService = inject(PermissionService);
 
   readonly canManageTenant = this.permissionService.can('tenant:manage');
   readonly canManageSettings = this.permissionService.can('settings:manage');
   readonly canInviteStaff = this.permissionService.can('staff:invite');
+  readonly canManageWhatsApp = this.permissionService.can('whatsapp:manage');
 
   readonly categories = TENANT_SETTINGS_CATEGORIES;
 
@@ -74,10 +78,23 @@ export class SettingsPage {
     role: ['STAFF' as 'STAFF' | 'MANAGER'],
   });
 
+  // --- WhatsApp connection (Milestone 7, docs/WHATSAPP_ARCHITECTURE.md) ---
+  readonly whatsappAccount = signal<WhatsAppAccount | null>(null);
+  readonly isLoadingWhatsApp = signal(true);
+  readonly isConnectingWhatsApp = signal(false);
+  readonly whatsappError = signal<string | null>(null);
+  readonly connectWhatsAppForm = this.formBuilder.nonNullable.group({
+    phoneNumber: ['', Validators.required],
+    whatsappPhoneNumberId: ['', Validators.required],
+    whatsappBusinessAccountId: ['', Validators.required],
+    accessToken: ['', Validators.required],
+  });
+
   constructor() {
     this.loadProfile();
     this.loadSettings();
     this.loadInvitations();
+    this.loadWhatsAppAccount();
   }
 
   private loadProfile(): void {
@@ -217,6 +234,51 @@ export class SettingsPage {
       next: () => {
         this.invitations.update((current) => current.filter((i) => i.id !== invitation.id));
       },
+    });
+  }
+
+  private loadWhatsAppAccount(): void {
+    this.isLoadingWhatsApp.set(true);
+    this.conversationsApi.getAccount().subscribe({
+      next: (account) => {
+        this.whatsappAccount.set(account);
+        this.isLoadingWhatsApp.set(false);
+      },
+      error: () => this.isLoadingWhatsApp.set(false),
+    });
+  }
+
+  connectWhatsApp(): void {
+    if (this.connectWhatsAppForm.invalid || this.isConnectingWhatsApp()) {
+      this.connectWhatsAppForm.markAllAsTouched();
+      return;
+    }
+    this.isConnectingWhatsApp.set(true);
+    this.whatsappError.set(null);
+
+    this.conversationsApi.connectAccount(this.connectWhatsAppForm.getRawValue()).subscribe({
+      next: (account) => {
+        this.isConnectingWhatsApp.set(false);
+        this.whatsappAccount.set(account);
+        this.connectWhatsAppForm.reset();
+      },
+      error: (error: unknown) => {
+        this.isConnectingWhatsApp.set(false);
+        this.whatsappError.set(
+          error instanceof ApiError ? error.message : 'Could not connect the WhatsApp account.',
+        );
+      },
+    });
+  }
+
+  disconnectWhatsApp(): void {
+    if (
+      !confirm('Disconnect the WhatsApp Business account? Inbound/outbound messaging will stop.')
+    ) {
+      return;
+    }
+    this.conversationsApi.disconnectAccount().subscribe({
+      next: (account) => this.whatsappAccount.set(account),
     });
   }
 }

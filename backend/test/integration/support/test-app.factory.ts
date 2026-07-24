@@ -24,9 +24,11 @@ export async function createTestApp(): Promise<INestApplication> {
     imports: [AppModule, RbacProbeTestModule],
   }).compile();
 
-  const app = moduleRef.createNestApplication();
+  const app = moduleRef.createNestApplication({ rawBody: true });
 
-  app.setGlobalPrefix('api/v1', { exclude: ['health', 'health/ready'] });
+  app.setGlobalPrefix('api/v1', {
+    exclude: ['health', 'health/ready', 'webhooks/whatsapp'],
+  });
   app.use(cookieParser());
   app.useGlobalPipes(
     new ValidationPipe({

@@ -1017,6 +1017,8 @@ model AppointmentFeedback {
 
 ## 8. Conversation Models
 
+> **Built Milestone 7 (docs/adr/ADR-010-whatsapp-platform.md)** — as-built with the deviations noted in DATABASE_DESIGN.md §3.6/§3.7 and this codebase's `backend/prisma/schema.prisma` itself (which remains the source of truth for the exact field list): narrowed `ConversationStatus`, media metadata as plain `Message` columns rather than a `Media` model, `senderType: ActorType` (reusing the existing enum) instead of a bespoke `MessageSenderType`, and standard `gen_random_uuid()` rather than app-generated UUIDv7 for `Message`/`WebhookEvent`. The Prisma snippets below are retained as the original design intent.
+
 ```prisma
 model Conversation {
   id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

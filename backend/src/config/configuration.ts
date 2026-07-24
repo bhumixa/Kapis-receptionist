@@ -102,3 +102,18 @@ export const tenantsConfig = registerAs('tenants', () => ({
     10,
   ),
 }));
+
+/**
+ * WhatsApp Cloud API (Milestone 7, docs/WHATSAPP_ARCHITECTURE.md). appSecret
+ * and verifyToken are per-Meta-App (shared across all tenants); a tenant's
+ * own credentials live on WhatsAppAccount, encrypted with
+ * tokenEncryptionKey via core/security/encryption.service.ts.
+ */
+export const whatsappConfig = registerAs('whatsapp', () => ({
+  appSecret: process.env.WHATSAPP_APP_SECRET,
+  verifyToken: process.env.WHATSAPP_VERIFY_TOKEN,
+  tokenEncryptionKey: process.env.WHATSAPP_TOKEN_ENCRYPTION_KEY,
+  graphApiBaseUrl:
+    process.env.WHATSAPP_GRAPH_API_BASE_URL ??
+    'https://graph.facebook.com/v21.0',
+}));

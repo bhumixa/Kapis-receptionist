@@ -170,6 +170,31 @@ export const routes: Routes = [
           ),
       },
       {
+        // Milestone 7 (docs/WHATSAPP_ARCHITECTURE.md). No tenantActiveGuard
+        // on reads/replies — `POST /messages/send` is gated server-side by
+        // `TenantActiveGuard` regardless, mirroring the appointments/
+        // customers read-vs-write split. Two route entries (list-only and
+        // list+selected-detail) both load the same two-pane inbox
+        // component, matching `EmployeeProfilePage`'s "list + detail on one
+        // page" shape rather than separate routed pages.
+        path: 'conversations',
+        canActivate: [roleGuard],
+        data: { roles: ['STAFF'] },
+        loadComponent: () =>
+          import('./features/conversations/pages/conversations-inbox-page/conversations-inbox-page').then(
+            (m) => m.ConversationsInboxPage,
+          ),
+      },
+      {
+        path: 'conversations/:id',
+        canActivate: [roleGuard],
+        data: { roles: ['STAFF'] },
+        loadComponent: () =>
+          import('./features/conversations/pages/conversations-inbox-page/conversations-inbox-page').then(
+            (m) => m.ConversationsInboxPage,
+          ),
+      },
+      {
         // TenantActiveGuard's own redirect target (Section 3.3's exemption
         // pattern) — deliberately not itself gated by tenantActiveGuard, or
         // a suspended tenant could never reach the page explaining why.

@@ -1,4 +1,4 @@
-import { RoleName } from '@prisma/client';
+import { Prisma, RoleName } from '@prisma/client';
 import { AuditLogService } from '../../../src/core/audit/audit-log.service';
 import { TenantResourceNotFoundException } from '../../../src/core/guards/rbac.exceptions';
 import { CustomerEntity } from '../../../src/modules/customers/domain/entities/customer.entity';
@@ -107,6 +107,71 @@ describe('CustomerService', () => {
       expect(auditLog.record).toHaveBeenCalledWith(
         expect.objectContaining({ action: 'CUSTOMER_DELETED' }),
       );
+    });
+  });
+
+  describe('findOrCreateByPhoneForTenant', () => {
+    it('returns the existing customer when the phone number is already known', async () => {
+      const existing = makeCustomer();
+      repo.findByPhoneForTenant.mockResolvedValue(existing);
+
+      const result = await service.findOrCreateByPhoneForTenant(
+        'tenant-1',
+        '+5511999999999',
+        'Some WhatsApp Name',
+      );
+
+      expect(result).toEqual(existing);
+      expect(repo.create).not.toHaveBeenCalled();
+    });
+
+    it('creates a new customer using the WhatsApp profile name as a firstName fallback', async () => {
+      repo.findByPhoneForTenant.mockResolvedValue(null);
+      const created = makeCustomer({ firstName: 'Maria' });
+      repo.create.mockResolvedValue(created);
+
+      const result = await service.findOrCreateByPhoneForTenant(
+        'tenant-1',
+        '+5511999999999',
+        'Maria',
+      );
+
+      expect(result).toEqual(created);
+      expect(repo.create).toHaveBeenCalledWith('tenant-1', {
+        phoneNumber: '+5511999999999',
+        firstName: 'Maria',
+      });
+    });
+
+    it('creates a new customer with a null firstName when no WhatsApp profile name is given', async () => {
+      repo.findByPhoneForTenant.mockResolvedValue(null);
+      repo.create.mockResolvedValue(makeCustomer({ firstName: null }));
+
+      await service.findOrCreateByPhoneForTenant('tenant-1', '+5511999999999');
+
+      expect(repo.create).toHaveBeenCalledWith('tenant-1', {
+        phoneNumber: '+5511999999999',
+        firstName: null,
+      });
+    });
+
+    it('resolves to the winner of a concurrent create race instead of throwing', async () => {
+      repo.findByPhoneForTenant
+        .mockResolvedValueOnce(null) // first check: not found
+        .mockResolvedValueOnce(makeCustomer()); // re-check after conflict: found
+      repo.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('unique violation', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+      );
+
+      const result = await service.findOrCreateByPhoneForTenant(
+        'tenant-1',
+        '+5511999999999',
+      );
+
+      expect(result).toEqual(makeCustomer());
     });
   });
 });

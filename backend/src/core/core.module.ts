@@ -10,6 +10,7 @@ import { TenantActiveGuard } from './guards/tenant-active.guard';
 import { TenantScopedGuard } from './guards/tenant-scoped.guard';
 import { TenantMiddleware } from './middleware/tenant.middleware';
 import { PermissionResolverService } from './permission-resolver.service';
+import { EncryptionModule } from './security/encryption.module';
 
 /**
  * Cross-cutting authorization infrastructure (docs/adr/ADR-005-rbac.md,
@@ -31,7 +32,7 @@ import { PermissionResolverService } from './permission-resolver.service';
  * non-global export pattern already used elsewhere in this codebase.
  */
 @Module({
-  imports: [forwardRef(() => AuthModule), AuditLogModule],
+  imports: [forwardRef(() => AuthModule), AuditLogModule, EncryptionModule],
   providers: [
     TenantContextService,
     PermissionResolverService,
@@ -58,6 +59,7 @@ import { PermissionResolverService } from './permission-resolver.service';
     SuperAdminGuard,
     TenantMiddleware,
     AuditLogModule,
+    EncryptionModule,
   ],
 })
 export class CoreModule {}

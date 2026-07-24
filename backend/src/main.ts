@@ -8,14 +8,25 @@ import { AppModule } from './app.module';
 import { validationExceptionFactory } from './common/pipes/validation-exception-factory';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  // rawBody: true (docs/WHATSAPP_ARCHITECTURE.md) — `POST /webhooks/whatsapp`
+  // verifies Meta's X-Hub-Signature-256 HMAC against the exact raw request
+  // bytes; re-serializing the parsed JSON body would not reliably reproduce
+  // Meta's original byte sequence.
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: true,
+    rawBody: true,
+  });
 
   app.useLogger(app.get(Logger));
 
   const configService = app.get(ConfigService);
 
+  // `webhooks/whatsapp` is unversioned/unprefixed, same rationale as
+  // `health` — Meta's webhook callback URL is registered once in the App
+  // Dashboard and shouldn't move if the API's version prefix ever changes,
+  // and it isn't called through this platform's own versioned API client.
   app.setGlobalPrefix('api/v1', {
-    exclude: ['health', 'health/ready'],
+    exclude: ['health', 'health/ready', 'webhooks/whatsapp'],
   });
 
   app.enableCors({

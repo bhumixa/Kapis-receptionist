@@ -722,6 +722,8 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 
 ### 3.6 Conversations
 
+> **Built Milestone 7 (docs/adr/ADR-010-whatsapp-platform.md)** — as-built, with these deviations from Sections 3.6/3.7 below: no `ai_contexts`/`conversation_summaries` tables (Milestone 8's territory — nothing here assumes or blocks them); `conversations.status` is `OPEN`/`RESOLVED`/`CLOSED` only, no `OPEN_AI`/`ESCALATED`/`HUMAN_HANDLING` (meaningless without an AI actor to hand off from); `messages` has no separate `media` table/FK — media metadata (`media_whatsapp_id`/`media_mime_type`/`media_sha256`/`media_filename`/`media_size_bytes`) lives as plain columns directly on `messages` instead (no file download/S3 storage this milestone, so a dedicated `Media` entity with its own lifecycle would be unwarranted); `messages.id`/`whatsapp_webhook_events.id` use standard `gen_random_uuid()`, not app-generated UUIDv7 — same "not worth a new dependency at this milestone's volume" call this codebase already made for `AuditLog`/`AppointmentStatusHistory`; no `template_messages` table (no `TemplateMessage` registry built — outbound past the 24h window is rejected, not template-routed). Full as-built reference: docs/WHATSAPP_ARCHITECTURE.md, docs/MESSAGING_ARCHITECTURE.md.
+
 #### 3.6.1 `conversations`
 **Purpose:** A WhatsApp conversation thread between one customer and one tenant.
 **Columns:**

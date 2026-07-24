@@ -10,6 +10,7 @@ import {
   rbacConfig,
   redisConfig,
   tenantsConfig,
+  whatsappConfig,
 } from './configuration';
 import { validateEnv } from './env.validation';
 
@@ -28,6 +29,7 @@ import { validateEnv } from './env.validation';
         accountSecurityConfig,
         rbacConfig,
         tenantsConfig,
+        whatsappConfig,
       ],
       validate: validateEnv,
     }),

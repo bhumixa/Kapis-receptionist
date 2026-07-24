@@ -109,8 +109,9 @@ model User {
 
   // Relations deferred to their owning milestone (docs/AUTH_SCHEMA_REVIEW.md
   // Section 4): employee (M4), auditLogs/activityLogs/apiKeysCreated (M9),
-  // customerNotesAuthored/filesUploaded (M4), assignedConversations/
-  // messagesSent (M6), notifications (M9).
+  // customerNotesAuthored/filesUploaded (M4), notifications (M9).
+  // assignedConversations/messagesSent land now (M7) — both names were
+  // already reserved by this comment ahead of time.
   tenant                          Tenant?                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   roles                           UserRole[]
   sessions                        RefreshToken[]
@@ -120,6 +121,8 @@ model User {
   auditLogs                       AuditLog[]
   employee                        Employee?
   appointmentStatusHistoryActions AppointmentStatusHistory[]
+  assignedConversations           Conversation[]             @relation("AssignedConversations")
+  messagesSent                    Message[]                  @relation("MessagesSent")
 
   @@index([tenantId], name: "idx_users_tenant_id")
   @@map("users")
@@ -274,6 +277,8 @@ model Tenant {
   services          Service[]
   customers         Customer[]
   appointments      Appointment[]
+  whatsappAccount   WhatsAppAccount?
+  conversations     Conversation[]
 
   @@index([status], name: "idx_tenants_status")
   @@map("tenants")
@@ -564,8 +569,9 @@ model Customer {
   deletedByType     ActorType?
   deletedById       String?    @db.Uuid
 
-  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  appointments Appointment[]
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  appointments  Appointment[]
+  conversations Conversation[]
 
   // Plain (tenantId, phoneNumber) index here — the partial unique
   // (`WHERE deletedAt IS NULL`) is a manual migration edit, docs/PRISMA_
@@ -728,6 +734,196 @@ model AuditLog {
   @@index([entityType, entityId], name: "idx_audit_logs_entity")
   @@index([action], name: "idx_audit_logs_action")
   @@map("audit_logs")
+}
+
+// --- WhatsApp Models (Milestone 7, docs/WHATSAPP_ARCHITECTURE.md,
+// docs/MESSAGING_ARCHITECTURE.md, docs/adr/ADR-010-whatsapp-platform.md) ----
+// Deliberately narrowed from PRISMA_SCHEMA.md/DATABASE_DESIGN.md's original
+// design, matching the "narrow the ask, log the deferral" precedent set by
+// ADR-008/ADR-009:
+//  - One `whatsapp` module owns all four models below (not three separate
+//    modules as SYSTEM_ARCHITECTURE.md originally sketched).
+//  - `ConversationStatus` has no AI/escalation states (`OPEN_AI`,
+//    `ESCALATED`, `HUMAN_HANDLING`) — meaningless without an AI
+//    auto-responder, which doesn't exist until Milestone 8. Extending this
+//    enum is that milestone's job, not this one's.
+//  - `Message` stores media *metadata only* as plain columns
+//    (mediaWhatsappId/mediaMimeType/mediaSha256/mediaFilename/
+//    mediaSizeBytes) — no separate `Media` model, no S3 download/upload.
+//    The `Files`/S3 module itself remains an open gap from Milestone 5; this
+//    milestone's brief only asked for "media metadata persistence".
+//  - No `TemplateMessage` registry — outbound sends past the 24-hour
+//    customer-service window are rejected (422 OUTSIDE_MESSAGING_WINDOW),
+//    not template-routed. Template support is deferred.
+//  - `Message.senderType` reuses the existing `ActorType` enum
+//    (USER/SYSTEM/CUSTOMER now, AI ready for Milestone 8) rather than a new
+//    MessageSenderType enum — the concepts are identical.
+
+enum WhatsAppConnectionStatus {
+  PENDING
+  CONNECTED
+  DISCONNECTED
+  ERROR
+}
+
+enum ConversationStatus {
+  OPEN
+  RESOLVED
+  CLOSED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  AUDIO
+  VIDEO
+  DOCUMENT
+  STICKER
+  LOCATION
+  INTERACTIVE
+  UNSUPPORTED
+}
+
+enum MessageDeliveryStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum WebhookProcessingStatus {
+  PENDING
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+// 1:1 with Tenant. `accessTokenEncrypted` is the first *decryptable* secret
+// in this codebase (core/security/encryption.service.ts, AES-256-GCM) —
+// every other stored secret so far (passwordHash, refreshTokenHash,
+// tokenHash) is one-way, but outbound Cloud API calls need the raw token.
+model WhatsAppAccount {
+  id                        String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId                  String                   @unique @db.Uuid
+  phoneNumber               String                   @db.VarChar(20)
+  whatsappPhoneNumberId     String                   @unique @db.VarChar(100)
+  whatsappBusinessAccountId String                   @db.VarChar(100)
+  accessTokenEncrypted      String                   @db.Text
+  connectionStatus          WhatsAppConnectionStatus @default(PENDING)
+  connectedAt               DateTime?
+  disconnectedAt            DateTime?
+  lastHealthCheckAt         DateTime?
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@unique([tenantId, id], name: "uq_whatsapp_accounts_tenant_id")
+  @@map("whatsapp_accounts")
+}
+
+// No forced "one open conversation per customer" uniqueness — deliberately,
+// matching DATABASE_DESIGN.md's original call: "current open thread" is an
+// app-layer query (most recent by lastMessageAt), not a DB constraint.
+model Conversation {
+  id                   String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId             String             @db.Uuid
+  customerId           String             @db.Uuid
+  whatsappAccountId    String             @db.Uuid
+  status               ConversationStatus @default(OPEN)
+  assignedUserId       String?            @db.Uuid
+  lastMessageAt        DateTime?
+  // Tracks the most recent *inbound* message only — the 24-hour
+  // customer-service-messaging-window check (API_SPECIFICATION.md Section
+  // 11) is computed from this, distinct from lastMessageAt (any direction,
+  // used for inbox sort order).
+  lastInboundMessageAt DateTime?
+  resolvedAt           DateTime?
+  closedAt             DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer        Customer        @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
+  whatsappAccount WhatsAppAccount @relation(fields: [tenantId, whatsappAccountId], references: [tenantId, id], onDelete: Restrict)
+  assignedUser    User?           @relation("AssignedConversations", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  messages        Message[]
+
+  @@unique([tenantId, id], name: "uq_conversations_tenant_id")
+  @@index([tenantId, customerId], name: "idx_conversations_tenant_customer")
+  @@index([tenantId, status, lastMessageAt], name: "idx_conversations_tenant_status_last_message")
+  @@map("conversations")
+}
+
+// Highest-volume table in this domain. tenantId is a bare scalar column with
+// no formal `tenant Tenant @relation` (same precedent as
+// AppointmentStatusHistory) — avoids requiring a back-relation array on
+// Tenant for a table this high-write. `whatsappMessageId` is the idempotency
+// guard against Meta's at-least-once webhook delivery (partial-unique,
+// manual migration, docs/PRISMA_SCHEMA.md Section 14.4's established
+// mechanism) — paired with a fast Redis dedup check
+// (`dedup:whatsapp:{whatsappMessageId}`) as the first layer, mirroring the
+// two-layer conflict-prevention philosophy ADR-009 established for booking.
+model Message {
+  id                   String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId             String                @db.Uuid
+  conversationId       String                @db.Uuid
+  direction            MessageDirection
+  senderType           ActorType
+  senderId             String?               @db.Uuid
+  messageType          MessageType
+  content              String?               @db.Text
+  mediaWhatsappId      String?               @db.VarChar(255)
+  mediaMimeType        String?               @db.VarChar(100)
+  mediaSha256          String?               @db.VarChar(64)
+  mediaFilename        String?               @db.VarChar(255)
+  mediaSizeBytes       Int?
+  whatsappMessageId    String?               @db.VarChar(100)
+  status               MessageDeliveryStatus @default(QUEUED)
+  failureReason        String?               @db.VarChar(500)
+  sourceWebhookEventId String?               @db.Uuid
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  conversation       Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender             User?         @relation("MessagesSent", fields: [senderId], references: [id], onDelete: SetNull)
+  sourceWebhookEvent WebhookEvent? @relation(fields: [sourceWebhookEventId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, createdAt], name: "idx_messages_conversation_created")
+  @@index([tenantId, createdAt], name: "idx_messages_tenant_created")
+  @@map("messages")
+}
+
+// Global ingestion log, written synchronously before any processing —
+// tenantId is nullable because it's resolved asynchronously by the queue
+// worker (via whatsappPhoneNumberId lookup), and the raw payload is
+// persisted even when signature verification fails, so a spoofing attempt
+// is forensically visible rather than silently dropped
+// (API_SPECIFICATION.md Section 2.12).
+model WebhookEvent {
+  id                String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String?                 @db.Uuid
+  whatsappMessageId String?                 @db.VarChar(100)
+  eventType         String                  @db.VarChar(50)
+  payload           Json
+  signatureValid    Boolean
+  processingStatus  WebhookProcessingStatus @default(PENDING)
+  processedAt       DateTime?
+  errorMessage      String?                 @db.VarChar(500)
+  createdAt         DateTime                @default(now())
+
+  messages Message[]
+
+  @@index([processingStatus], name: "idx_webhook_events_processing_status")
+  @@index([tenantId, createdAt], name: "idx_webhook_events_tenant_created")
+  @@map("whatsapp_webhook_events")
 }
 
 // --- Billing Models (docs/PRISMA_SCHEMA.md Section 10) ---------------------

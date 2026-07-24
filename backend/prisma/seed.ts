@@ -55,6 +55,10 @@ const PERMISSIONS = [
     key: 'appointments:manage',
     description: 'Create, reschedule, cancel, and hard-remove appointments',
   },
+  {
+    key: 'whatsapp:manage',
+    description: 'Connect or disconnect the tenant WhatsApp Business account',
+  },
 ] as const;
 
 const ROLE_PERMISSIONS: Record<RoleName, readonly string[]> = {
@@ -69,6 +73,7 @@ const ROLE_PERMISSIONS: Record<RoleName, readonly string[]> = {
     'services:manage',
     'customers:manage',
     'appointments:manage',
+    'whatsapp:manage',
   ],
   [RoleName.STAFF]: [],
 };

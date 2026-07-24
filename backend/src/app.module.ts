@@ -18,6 +18,8 @@ import { EmployeesModule } from './modules/employees/employees.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { AvailabilityModule } from './modules/availability/availability.module';
 import { AppointmentsModule } from './modules/appointments/appointments.module';
+import { BullmqRootModule } from './queues/bullmq-root.module';
+import { WhatsAppModule } from './modules/whatsapp/whatsapp.module';
 
 @Module({
   imports: [
@@ -35,6 +37,8 @@ import { AppointmentsModule } from './modules/appointments/appointments.module';
     CustomersModule,
     AvailabilityModule,
     AppointmentsModule,
+    BullmqRootModule,
+    WhatsAppModule,
   ],
   controllers: [],
   providers: [
