@@ -59,6 +59,11 @@ const PERMISSIONS = [
     key: 'whatsapp:manage',
     description: 'Connect or disconnect the tenant WhatsApp Business account',
   },
+  {
+    key: 'ai:manage',
+    description:
+      'Configure AI receptionist behavior (greeting, tone, escalation rules, prompt versions)',
+  },
 ] as const;
 
 const ROLE_PERMISSIONS: Record<RoleName, readonly string[]> = {
@@ -74,6 +79,7 @@ const ROLE_PERMISSIONS: Record<RoleName, readonly string[]> = {
     'customers:manage',
     'appointments:manage',
     'whatsapp:manage',
+    'ai:manage',
   ],
   [RoleName.STAFF]: [],
 };

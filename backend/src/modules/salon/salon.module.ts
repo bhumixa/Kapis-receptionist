@@ -52,8 +52,11 @@ import { SalonHolidaysController } from './interface/salon-holidays.controller';
   ],
   // Milestone 6 (docs/adr/ADR-009-scheduling-engine.md): `modules/
   // availability` needs `BusinessHoursService` (salon-wide open hours) and
-  // `HolidayService` (tenant-wide closures) as inputs to slot computation —
-  // this module's first cross-module consumer.
-  exports: [BusinessHoursService, HolidayService],
+  // `HolidayService` (tenant-wide closures) as inputs to slot computation.
+  // Milestone 8 (docs/adr/ADR-011-ai-receptionist.md): `SalonProfileService`
+  // additionally exported — the AI's `answerFaq` tool grounds address/
+  // contact/description answers on it (SYSTEM_ARCHITECTURE.md 5.9's
+  // "grounding, not memorization" rule).
+  exports: [SalonProfileService, BusinessHoursService, HolidayService],
 })
 export class SalonModule {}

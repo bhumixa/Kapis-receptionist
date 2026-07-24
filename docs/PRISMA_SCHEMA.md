@@ -1018,6 +1018,8 @@ model AppointmentFeedback {
 ## 8. Conversation Models
 
 > **Built Milestone 7 (docs/adr/ADR-010-whatsapp-platform.md)** — as-built with the deviations noted in DATABASE_DESIGN.md §3.6/§3.7 and this codebase's `backend/prisma/schema.prisma` itself (which remains the source of truth for the exact field list): narrowed `ConversationStatus`, media metadata as plain `Message` columns rather than a `Media` model, `senderType: ActorType` (reusing the existing enum) instead of a bespoke `MessageSenderType`, and standard `gen_random_uuid()` rather than app-generated UUIDv7 for `Message`/`WebhookEvent`. The Prisma snippets below are retained as the original design intent.
+>
+> **Amended Milestone 8 (docs/adr/ADR-011-ai-receptionist.md)** — `AIContext`/`ConversationSummary`/`PromptVersion` are now built, closely matching the snippets below, with two deviations: `ConversationStatus` gains only `ESCALATED` (not the `OPEN_AI`/`HUMAN_HANDLING` this section's original `@default(OPEN_AI)` implied — see DATABASE_DESIGN.md §3.6's amendment note), and `PromptVersion` is deliberately **not** referenced by FK from `Message`/`ConversationSummary` — both instead store a plain `"{key}@{version}"` string column, decoupling the high-write `messages` table from the registry row's lifecycle (docs/AI_ARCHITECTURE.md §2).
 
 ```prisma
 model Conversation {

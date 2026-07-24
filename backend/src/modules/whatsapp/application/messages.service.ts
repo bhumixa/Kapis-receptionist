@@ -26,6 +26,12 @@ export interface SendMessageInput {
   body: string;
 }
 
+export interface SendAiMessageInput {
+  conversationId: string;
+  body: string;
+  promptVersion: string | null;
+}
+
 /**
  * `GET /messages`, `POST /messages/send` (API_SPECIFICATION.md Section 11)
  * — open to STAFF, matching the existing appointments/customers pattern:
@@ -77,14 +83,7 @@ export class MessagesService {
     if (!conversation) {
       throw new TenantResourceNotFoundException();
     }
-
-    if (
-      !conversation.lastInboundMessageAt ||
-      Date.now() - conversation.lastInboundMessageAt.getTime() >
-        MESSAGING_WINDOW_MS
-    ) {
-      throw new OutsideMessagingWindowException();
-    }
+    this.assertWithinMessagingWindow(conversation);
 
     const message = await this.messages.create(tenantId, {
       conversationId: input.conversationId,
@@ -96,16 +95,7 @@ export class MessagesService {
       status: MessageDeliveryStatus.QUEUED,
     });
 
-    await this.outboundQueue.add(
-      'send-message',
-      { tenantId, messageId: message.id },
-      {
-        attempts: 5,
-        backoff: { type: 'exponential', delay: 2000 },
-        removeOnComplete: true,
-        removeOnFail: false,
-      },
-    );
+    await this.enqueueOutbound(tenantId, message.id);
 
     await this.auditLog.record({
       action: 'WHATSAPP_MESSAGE_SEND_QUEUED',
@@ -118,5 +108,85 @@ export class MessagesService {
     });
 
     return message;
+  }
+
+  /**
+   * AI-orchestration sibling of `sendMessage` (docs/adr/
+   * ADR-011-ai-receptionist.md) — persists with `senderType: AI` instead of
+   * `USER`, no `AccessTokenPayload`/`Idempotency-Key` (the caller is the
+   * in-process orchestrator, not an HTTP client retrying a request), and
+   * records `aiPromptVersion` for SYSTEM_ARCHITECTURE.md 5.6's traceability
+   * requirement. Reuses the exact same 24-hour-messaging-window check
+   * `sendMessage` enforces — an AI reply is bound by the same Meta
+   * compliance rule as a manual staff reply, never a bypass.
+   */
+  async sendAiMessage(
+    tenantId: string,
+    input: SendAiMessageInput,
+  ): Promise<MessageEntity> {
+    const conversation = await this.conversations.findByIdForTenant(
+      tenantId,
+      input.conversationId,
+    );
+    if (!conversation) {
+      throw new TenantResourceNotFoundException();
+    }
+    this.assertWithinMessagingWindow(conversation);
+
+    const message = await this.messages.create(tenantId, {
+      conversationId: input.conversationId,
+      direction: 'OUTBOUND',
+      senderType: ActorType.AI,
+      senderId: null,
+      messageType: MessageType.TEXT,
+      content: input.body,
+      status: MessageDeliveryStatus.QUEUED,
+      aiPromptVersion: input.promptVersion,
+    });
+
+    await this.enqueueOutbound(tenantId, message.id);
+
+    await this.auditLog.record({
+      action: 'AI_MESSAGE_SEND_QUEUED',
+      entityType: 'Message',
+      entityId: message.id,
+      actorType: ActorType.AI,
+      actorId: null,
+      tenantId,
+      metadata: {
+        conversationId: input.conversationId,
+        promptVersion: input.promptVersion,
+      },
+    });
+
+    return message;
+  }
+
+  private assertWithinMessagingWindow(conversation: {
+    lastInboundMessageAt: Date | null;
+  }): void {
+    if (
+      !conversation.lastInboundMessageAt ||
+      Date.now() - conversation.lastInboundMessageAt.getTime() >
+        MESSAGING_WINDOW_MS
+    ) {
+      throw new OutsideMessagingWindowException();
+    }
+  }
+
+  private async enqueueOutbound(
+    tenantId: string,
+    messageId: string,
+  ): Promise<void> {
+    await this.outboundQueue.add(
+      'send-message',
+      { tenantId, messageId },
+      {
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: true,
+        removeOnFail: false,
+      },
+    );
   }
 }

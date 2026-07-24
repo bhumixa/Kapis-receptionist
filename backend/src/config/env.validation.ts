@@ -154,6 +154,47 @@ class EnvironmentVariables {
   @IsUrl({ require_tld: false })
   @IsOptional()
   WHATSAPP_GRAPH_API_BASE_URL: string = 'https://graph.facebook.com/v21.0';
+
+  // --- AI Receptionist (Milestone 8, docs/AI_ARCHITECTURE.md) ---
+  // OPENAI_API_KEY is the only required addition — everything else has a
+  // safe default, matching this file's existing "fail fast only on what
+  // truly has no reasonable default" convention.
+  @IsString()
+  @MinLength(20)
+  OPENAI_API_KEY: string;
+
+  @IsString()
+  @IsOptional()
+  OPENAI_MODEL: string = 'gpt-4o-mini';
+
+  @IsUrl({ require_tld: false })
+  @IsOptional()
+  OPENAI_BASE_URL?: string;
+
+  @IsInt()
+  @IsOptional()
+  AI_REQUEST_TIMEOUT_MS: number = 8000;
+
+  @IsInt()
+  @IsOptional()
+  AI_MAX_RETRIES: number = 2;
+
+  @IsInt()
+  @IsOptional()
+  AI_MAX_HISTORY_MESSAGES: number = 20;
+
+  // Shared secret for InternalServiceAuthGuard (core/guards/) — the
+  // `X-Internal-Api-Key` header on POST /ai/tools/* and internal-mode
+  // POST /ai/chat. Rotated independently of any user credential, the same
+  // "fail fast on a malformed/missing secret at boot" treatment as
+  // WHATSAPP_APP_SECRET.
+  @IsString()
+  @MinLength(32)
+  AI_INTERNAL_API_KEY: string;
+
+  @IsInt()
+  @IsOptional()
+  AI_RATE_LIMIT_PER_MINUTE: number = 30;
 }
 
 /**

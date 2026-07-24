@@ -20,6 +20,7 @@ import { AvailabilityModule } from './modules/availability/availability.module';
 import { AppointmentsModule } from './modules/appointments/appointments.module';
 import { BullmqRootModule } from './queues/bullmq-root.module';
 import { WhatsAppModule } from './modules/whatsapp/whatsapp.module';
+import { AiModule } from './modules/ai/ai.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { WhatsAppModule } from './modules/whatsapp/whatsapp.module';
     AppointmentsModule,
     BullmqRootModule,
     WhatsAppModule,
+    AiModule,
   ],
   controllers: [],
   providers: [

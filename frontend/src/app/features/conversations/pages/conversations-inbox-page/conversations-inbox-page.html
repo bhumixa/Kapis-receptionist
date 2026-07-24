@@ -1,8 +1,23 @@
 <div class="flex h-[calc(100vh-160px)] gap-4">
   <!-- Conversation list -->
   <aside class="w-80 shrink-0 rounded-md border border-gray-200 bg-white overflow-y-auto">
-    <div class="px-4 py-3 border-b border-gray-100">
+    <div class="px-4 py-3 border-b border-gray-100 space-y-2">
       <h1 class="text-sm font-semibold text-gray-900">Conversations</h1>
+      <div class="flex flex-wrap gap-1">
+        @for (option of statusFilterOptions; track option) {
+          <button
+            type="button"
+            (click)="setStatusFilter(option)"
+            class="rounded-full px-2.5 py-1 text-xs font-medium"
+            [class.bg-gray-900]="statusFilter() === option"
+            [class.text-white]="statusFilter() === option"
+            [class.bg-gray-100]="statusFilter() !== option"
+            [class.text-gray-600]="statusFilter() !== option"
+          >
+            {{ option === null ? 'All' : statusLabels[option] }}
+          </button>
+        }
+      </div>
     </div>
     @if (isLoadingList()) {
       <p class="px-4 py-3 text-sm text-gray-500">Loading...</p>
@@ -30,10 +45,15 @@
                 class="mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium"
                 [class.bg-emerald-100]="conversation.status === 'OPEN'"
                 [class.text-emerald-800]="conversation.status === 'OPEN'"
-                [class.bg-gray-100]="conversation.status !== 'OPEN'"
-                [class.text-gray-600]="conversation.status !== 'OPEN'"
+                [class.bg-amber-100]="conversation.status === 'ESCALATED'"
+                [class.text-amber-800]="conversation.status === 'ESCALATED'"
+                [class.bg-gray-100]="conversation.status !== 'OPEN' && conversation.status !== 'ESCALATED'"
+                [class.text-gray-600]="conversation.status !== 'OPEN' && conversation.status !== 'ESCALATED'"
               >
                 {{ statusLabels[conversation.status] }}
+                @if (conversation.status === 'ESCALATED' && !conversation.assignedUserId) {
+                  &middot; unclaimed
+                }
               </span>
             </button>
           </li>
@@ -57,6 +77,34 @@
           <p class="text-xs text-gray-500">{{ selectedCustomer()?.phoneNumber }}</p>
         </div>
         <div class="flex gap-2">
+          @if (selectedConversation()!.status === 'ESCALATED') {
+            @if (selectedConversation()!.assignedUserId !== currentUserId()) {
+              <button
+                type="button"
+                (click)="takeOver()"
+                class="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+              >
+                Take over
+              </button>
+            } @else {
+              <button
+                type="button"
+                (click)="unassign()"
+                class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Unassign
+              </button>
+            }
+          }
+          @if (isAiDebugAvailable) {
+            <button
+              type="button"
+              (click)="toggleAiDebugPanel()"
+              class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            >
+              {{ showAiDebugPanel() ? 'Hide AI debug' : 'AI debug' }}
+            </button>
+          }
           @if (selectedConversation()!.status !== 'RESOLVED') {
             <button
               type="button"
@@ -92,6 +140,28 @@
           {{ message }}
         </div>
       }
+      @if (assignError(); as message) {
+        <div class="mx-4 mt-3 rounded-md bg-red-50 border border-red-200 px-4 py-2 text-sm text-red-800">
+          {{ message }}
+        </div>
+      }
+
+      @if (showAiDebugPanel()) {
+        <div class="mx-4 mt-3 rounded-md border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs text-indigo-900">
+          <p class="font-semibold mb-1">AI reasoning / debug (development only)</p>
+          @if (isLoadingAiContext()) {
+            <p>Loading AI context...</p>
+          } @else if (aiContext(); as context) {
+            <dl class="space-y-1">
+              <div><dt class="inline font-medium">Current intent:</dt> <dd class="inline">{{ context.currentIntent || '—' }}</dd></div>
+              <div><dt class="inline font-medium">Last tool call:</dt> <dd class="inline">{{ context.lastToolCall || '—' }}</dd></div>
+              <div><dt class="font-medium">State:</dt> <pre class="mt-1 whitespace-pre-wrap break-all rounded bg-white/60 p-2">{{ context.state | json }}</pre></div>
+            </dl>
+          } @else {
+            <p>No AI context recorded for this conversation yet.</p>
+          }
+        </div>
+      }
 
       <div class="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         @if (isLoadingMessages()) {
@@ -101,11 +171,15 @@
             <div class="flex" [class.justify-end]="message.direction === 'OUTBOUND'">
               <div
                 class="max-w-md rounded-lg px-3 py-2 text-sm"
-                [class.bg-gray-900]="message.direction === 'OUTBOUND'"
+                [class.bg-indigo-700]="message.senderType === 'AI'"
+                [class.bg-gray-900]="message.direction === 'OUTBOUND' && message.senderType !== 'AI'"
                 [class.text-white]="message.direction === 'OUTBOUND'"
                 [class.bg-gray-100]="message.direction === 'INBOUND'"
                 [class.text-gray-900]="message.direction === 'INBOUND'"
               >
+                @if (senderBadge(message); as badge) {
+                  <p class="mb-0.5 text-[10px] font-semibold uppercase tracking-wide opacity-75">{{ badge }}</p>
+                }
                 @if (message.content) {
                   <p>{{ message.content }}</p>
                 } @else {
@@ -184,6 +258,12 @@
       <div class="pt-2 border-t border-gray-100 text-xs text-gray-500 space-y-1">
         <p>Status: {{ statusLabels[conversation.status] }}</p>
         <p>Last message: {{ formatTimestamp(conversation.lastMessageAt) }}</p>
+        @if (conversation.status === 'ESCALATED') {
+          <p>Escalated: {{ formatTimestamp(conversation.escalatedAt) }}</p>
+          @if (conversation.escalationReason) {
+            <p>Reason: {{ conversation.escalationReason }}</p>
+          }
+        }
       </div>
     </aside>
   }

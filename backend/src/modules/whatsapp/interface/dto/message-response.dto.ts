@@ -20,6 +20,7 @@ export class MessageResponseDto {
   @ApiProperty({ nullable: true }) mediaSizeBytes!: number | null;
   @ApiProperty({ enum: MessageDeliveryStatus }) status!: MessageDeliveryStatus;
   @ApiProperty({ nullable: true }) failureReason!: string | null;
+  @ApiProperty({ nullable: true }) aiPromptVersion!: string | null;
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 }

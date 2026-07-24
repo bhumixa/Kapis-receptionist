@@ -766,8 +766,18 @@ enum WhatsAppConnectionStatus {
   ERROR
 }
 
+// `ESCALATED` added Milestone 8 (docs/adr/ADR-011-ai-receptionist.md) — the
+// AI hand-off state ADR-010 explicitly deferred ("Milestone 8's job"). No
+// `OPEN_AI`/`HUMAN_HANDLING` (the original pre-Milestone-7 PRISMA_SCHEMA.md/
+// DATABASE_DESIGN.md design had five states) — `OPEN` already covers
+// AI-or-idle by default (Milestone 7), and the already-existing
+// `Conversation.assignedUserId` distinguishes "queued, unclaimed"
+// (`ESCALATED` + `assignedUserId IS NULL`) from "claimed by staff" (`
+// ESCALATED` + `assignedUserId` set) without a redundant enum value. See the
+// ADR for the full narrowing rationale.
 enum ConversationStatus {
   OPEN
+  ESCALATED
   RESOLVED
   CLOSED
 }
@@ -845,16 +855,22 @@ model Conversation {
   // 11) is computed from this, distinct from lastMessageAt (any direction,
   // used for inbox sort order).
   lastInboundMessageAt DateTime?
+  // Milestone 8 (docs/adr/ADR-011-ai-receptionist.md): set together with
+  // `status: ESCALATED` by `ConversationsService.escalateConversation`.
+  escalatedAt          DateTime?
+  escalationReason     String?            @db.VarChar(255)
   resolvedAt           DateTime?
   closedAt             DateTime?
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
-  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  customer        Customer        @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
-  whatsappAccount WhatsAppAccount @relation(fields: [tenantId, whatsappAccountId], references: [tenantId, id], onDelete: Restrict)
-  assignedUser    User?           @relation("AssignedConversations", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  tenant          Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer        Customer             @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
+  whatsappAccount WhatsAppAccount      @relation(fields: [tenantId, whatsappAccountId], references: [tenantId, id], onDelete: Restrict)
+  assignedUser    User?                @relation("AssignedConversations", fields: [assignedUserId], references: [id], onDelete: SetNull)
   messages        Message[]
+  aiContext       AIContext?
+  summary         ConversationSummary?
 
   @@unique([tenantId, id], name: "uq_conversations_tenant_id")
   @@index([tenantId, customerId], name: "idx_conversations_tenant_customer")
@@ -889,6 +905,10 @@ model Message {
   status               MessageDeliveryStatus @default(QUEUED)
   failureReason        String?               @db.VarChar(500)
   sourceWebhookEventId String?               @db.Uuid
+  // Milestone 8 (docs/adr/ADR-011-ai-receptionist.md): set when
+  // senderType = AI, e.g. "system-prompt@v1" — a plain version string, not
+  // an FK to PromptVersion (see that model's own comment for why).
+  aiPromptVersion      String?               @db.VarChar(50)
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
 
@@ -924,6 +944,68 @@ model WebhookEvent {
   @@index([processingStatus], name: "idx_webhook_events_processing_status")
   @@index([tenantId, createdAt], name: "idx_webhook_events_tenant_created")
   @@map("whatsapp_webhook_events")
+}
+
+// --- AI Models (Milestone 8, docs/AI_ARCHITECTURE.md,
+// docs/adr/ADR-011-ai-receptionist.md) ---------------------------------------
+// Narrowed from PRISMA_SCHEMA.md/DATABASE_DESIGN.md's original design the
+// same "narrow the ask, log the deferral" way ADR-008/009/010 already did:
+//  - No `TenantSettings.ai` column — AI behavior config (greeting/tone/
+//    escalation instructions/enabled/confidence threshold) lives inside the
+//    existing `TenantSettings.general` JSON namespace as a nested `ai` key,
+//    per that model's own doc comment ("adding a field to a namespace is an
+//    application-layer change, never a schema migration").
+//  - `PromptVersion` is a metadata *registry* only (which version is
+//    active, for ops/debugging/the Prompt Management UI) — actual prompt
+//    *content* lives in versioned files under `modules/ai/prompts/`
+//    (SYSTEM_ARCHITECTURE.md 5.1: prompts are source-controlled artifacts,
+//    not DB content). `Message.aiPromptVersion`/`ConversationSummary.
+//    aiPromptVersion` are therefore plain version-string columns, not FKs
+//    to this table — decoupling the high-write `messages` table from a
+//    registry row's lifecycle.
+
+model AIContext {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String   @db.Uuid
+  conversationId String   @unique @db.Uuid
+  currentIntent  String?  @db.VarChar(50)
+  state          Json     @default("{}")
+  lastToolCall   String?  @db.VarChar(50)
+  updatedAt      DateTime @updatedAt
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@map("ai_contexts")
+}
+
+model ConversationSummary {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId           String   @db.Uuid
+  conversationId     String   @unique @db.Uuid
+  summaryText        String   @db.Text
+  messageCount       Int
+  lastCustomerIntent String?  @db.VarChar(100)
+  generatedAt        DateTime @default(now())
+  aiPromptVersion    String?  @db.VarChar(50)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@map("conversation_summaries")
+}
+
+// Ops/debugging registry, not a CMS — see the section comment above.
+model PromptVersion {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key         String    @db.VarChar(50)
+  version     String    @db.VarChar(20)
+  description String?   @db.VarChar(255)
+  isActive    Boolean   @default(false)
+  releasedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@unique([key, version], name: "uq_prompt_versions_key_version")
+  @@index([key, isActive], name: "idx_prompt_versions_key_active")
+  @@map("prompt_versions")
 }
 
 // --- Billing Models (docs/PRISMA_SCHEMA.md Section 10) ---------------------

@@ -38,6 +38,8 @@ export function toConversationResponseDto(
     lastInboundMessageAt: entity.lastInboundMessageAt
       ? entity.lastInboundMessageAt.toISOString()
       : null,
+    escalatedAt: entity.escalatedAt ? entity.escalatedAt.toISOString() : null,
+    escalationReason: entity.escalationReason,
     resolvedAt: entity.resolvedAt ? entity.resolvedAt.toISOString() : null,
     closedAt: entity.closedAt ? entity.closedAt.toISOString() : null,
     createdAt: entity.createdAt.toISOString(),
@@ -62,6 +64,7 @@ export function toMessageResponseDto(
     mediaSizeBytes: entity.mediaSizeBytes,
     status: entity.status,
     failureReason: entity.failureReason,
+    aiPromptVersion: entity.aiPromptVersion,
     createdAt: entity.createdAt.toISOString(),
     updatedAt: entity.updatedAt.toISOString(),
   };

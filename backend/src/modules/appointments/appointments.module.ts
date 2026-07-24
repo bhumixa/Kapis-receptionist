@@ -40,5 +40,11 @@ import { AppointmentsController } from './interface/appointments.controller';
     AppointmentsService,
     { provide: APPOINTMENT_REPOSITORY, useClass: PrismaAppointmentRepository },
   ],
+  // Milestone 8 (docs/adr/ADR-011-ai-receptionist.md): `modules/ai`'s
+  // `ToolExecutorService` calls `createAppointmentForAi`/
+  // `rescheduleAppointmentForAi`/`cancelAppointmentForAi` directly — the
+  // same in-process reuse this module's own doc comment already commits to
+  // (SYSTEM_ARCHITECTURE.md 5.3), not a duplicated booking implementation.
+  exports: [AppointmentsService],
 })
 export class AppointmentsModule {}

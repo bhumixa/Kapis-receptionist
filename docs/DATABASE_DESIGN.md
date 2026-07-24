@@ -723,6 +723,8 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 ### 3.6 Conversations
 
 > **Built Milestone 7 (docs/adr/ADR-010-whatsapp-platform.md)** — as-built, with these deviations from Sections 3.6/3.7 below: no `ai_contexts`/`conversation_summaries` tables (Milestone 8's territory — nothing here assumes or blocks them); `conversations.status` is `OPEN`/`RESOLVED`/`CLOSED` only, no `OPEN_AI`/`ESCALATED`/`HUMAN_HANDLING` (meaningless without an AI actor to hand off from); `messages` has no separate `media` table/FK — media metadata (`media_whatsapp_id`/`media_mime_type`/`media_sha256`/`media_filename`/`media_size_bytes`) lives as plain columns directly on `messages` instead (no file download/S3 storage this milestone, so a dedicated `Media` entity with its own lifecycle would be unwarranted); `messages.id`/`whatsapp_webhook_events.id` use standard `gen_random_uuid()`, not app-generated UUIDv7 — same "not worth a new dependency at this milestone's volume" call this codebase already made for `AuditLog`/`AppointmentStatusHistory`; no `template_messages` table (no `TemplateMessage` registry built — outbound past the 24h window is rejected, not template-routed). Full as-built reference: docs/WHATSAPP_ARCHITECTURE.md, docs/MESSAGING_ARCHITECTURE.md.
+>
+> **Amended Milestone 8 (docs/adr/ADR-011-ai-receptionist.md)** — `ai_contexts`/`conversation_summaries` are now built, matching §3.6.3/§3.6.4 below closely (a `prompt_versions` registry table is also new — see §8's amendment note). `conversations.status` gains exactly one value, `ESCALATED` — **not** the full `OPEN_AI`/`ESCALATED`/`HUMAN_HANDLING` set §3.6.1 originally specified; `conversations.assigned_user_id` (already existed) distinguishes queued-unclaimed from claimed, so a second/third status value would be redundant. `conversations` also gains `escalated_at`/`escalation_reason`; `messages` gains `ai_prompt_version` (a plain string, not an FK to `prompt_versions` — see §8's amendment). Full as-built reference: docs/AI_ARCHITECTURE.md.
 
 #### 3.6.1 `conversations`
 **Purpose:** A WhatsApp conversation thread between one customer and one tenant.
@@ -779,6 +781,7 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 ---
 
 #### 3.6.3 `ai_contexts`
+**Built Milestone 8 (docs/adr/ADR-011-ai-receptionist.md)** — matches this design as-is; the `state` JSONB additionally tracks the repeated-clarification-loop counter (`lastAiReply`/`repeatedReplyCount`), a use of the same generic slot-filling field, not a schema change.
 **Purpose:** Per-conversation working state the AI module needs across turns beyond raw message history — e.g., "customer is mid-booking-flow, has selected service X, awaiting time confirmation." Complements Redis-based short-term memory (Section 10) with a durable record of the last-known structured state.
 **Columns:** `conversation_id` UUID; `current_intent` VARCHAR(50) nullable (e.g. `BOOKING`, `RESCHEDULING`, `FAQ`); `state` JSONB default `'{}'` (structured slot-filling data, e.g. selected service/employee/time pending confirmation); `last_tool_call` VARCHAR(50) nullable; `updated_at` TIMESTAMPTZ.
 `tenant_id` (denormalized).
@@ -793,6 +796,7 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 ---
 
 #### 3.6.4 `conversation_summaries`
+**Built Milestone 8 (docs/adr/ADR-011-ai-receptionist.md)** — matches this design as-is, except `ai_prompt_version` is a plain string (`"{key}@{version}"`), not an FK — decoupling this table from the `prompt_versions` registry's lifecycle. Regeneration is currently triggered only at escalation (a deterministic digest, not an LLM call), not "periodically" as this section's Purpose line originally left open-ended.
 **Purpose:** Denormalized rollup of a conversation for fast dashboard display and AI context-window optimization (SYSTEM_ARCHITECTURE.md 5.7) — avoids re-reading/re-summarizing the full `Message` history on every reference.
 **Columns:** `conversation_id` UUID; `summary_text` TEXT; `message_count` INTEGER; `last_customer_intent` VARCHAR(100) nullable; `generated_at` TIMESTAMPTZ; `ai_prompt_version` VARCHAR(20) nullable.
 `tenant_id` (denormalized).
@@ -1298,6 +1302,8 @@ Redis's role spans several concerns (SYSTEM_ARCHITECTURE.md Section 11.3); this 
 - **Structure:** String (JSON) or Hash. **TTL:** matches refresh token expiry (auto-expires, no manual cleanup needed for the cache layer itself).
 
 ### 10.2 AI Memory Cache
+
+**Built Milestone 8 (docs/adr/ADR-011-ai-receptionist.md)** — the first key pattern below is built exactly as designed (`AiContextService`, `backend/src/modules/ai/application/ai-context.service.ts`; JSON string, 6h TTL). The second (`ai:tenant-config:{tenantId}`) is **not built** — `TenantSettings`/service-catalog reads go straight to Postgres on every turn; not yet identified as a real latency problem at this milestone's traffic volume, and flagged here as an explicit, deliberate deferral rather than an oversight.
 
 - **Key pattern:** `ai:context:{conversationId}` → cached, fast-access copy of the current `AIContext.state` and a bounded recent-message window, avoiding a Postgres round-trip on every AI turn (SYSTEM_ARCHITECTURE.md 5.2, 5.7).
 - **Structure:** Hash or JSON string. **TTL:** short-to-moderate (e.g., a few hours of inactivity), refreshed on every turn; the durable `ai_contexts`/`messages` tables are unaffected by cache expiry — this is purely a latency optimization, never the source of truth.

@@ -1,4 +1,4 @@
-import { ConversationStatus, RoleName } from '@prisma/client';
+import { ActorType, ConversationStatus, RoleName } from '@prisma/client';
 import { AuditLogService } from '../../../src/core/audit/audit-log.service';
 import { TenantResourceNotFoundException } from '../../../src/core/guards/rbac.exceptions';
 import { ConversationsService } from '../../../src/modules/whatsapp/application/conversations.service';
@@ -24,6 +24,8 @@ function makeConversation(
     assignedUserId: null,
     lastMessageAt: new Date('2026-07-24T10:00:00Z'),
     lastInboundMessageAt: new Date('2026-07-24T10:00:00Z'),
+    escalatedAt: null,
+    escalationReason: null,
     resolvedAt: null,
     closedAt: null,
     createdAt: new Date(),
@@ -45,6 +47,7 @@ describe('ConversationsService', () => {
       create: jest.fn(),
       updateStatus: jest.fn(),
       assignUser: jest.fn(),
+      escalate: jest.fn(),
       touchLastMessage: jest.fn(),
     };
     auditLog = { record: jest.fn().mockResolvedValue(undefined) };
@@ -165,6 +168,77 @@ describe('ConversationsService', () => {
         now,
         true,
       );
+    });
+  });
+
+  // Milestone 8 (docs/adr/ADR-011-ai-receptionist.md): the `escalateToHuman`
+  // tool target.
+  describe('escalateConversation', () => {
+    it('moves the conversation to ESCALATED and records an AI-attributed audit entry', async () => {
+      const current = makeConversation({ status: ConversationStatus.OPEN });
+      const escalated = makeConversation({
+        status: ConversationStatus.ESCALATED,
+        escalationReason: 'Customer asked for a human.',
+      });
+      repo.findByIdForTenant.mockResolvedValue(current);
+      repo.escalate.mockResolvedValue(escalated);
+
+      const result = await service.escalateConversation(
+        'tenant-1',
+        'conversation-1',
+        'Customer asked for a human.',
+        ActorType.AI,
+      );
+
+      expect(result.status).toBe(ConversationStatus.ESCALATED);
+      expect(repo.escalate).toHaveBeenCalledWith(
+        'tenant-1',
+        'conversation-1',
+        'Customer asked for a human.',
+      );
+      expect(auditLog.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'CONVERSATION_ESCALATED',
+          actorType: ActorType.AI,
+          actorId: null,
+          metadata: {
+            reason: 'Customer asked for a human.',
+            from: ConversationStatus.OPEN,
+          },
+        }),
+      );
+    });
+
+    it('also accepts ActorType.SYSTEM for the provider-outage fallback path', async () => {
+      repo.findByIdForTenant.mockResolvedValue(makeConversation());
+      repo.escalate.mockResolvedValue(
+        makeConversation({ status: ConversationStatus.ESCALATED }),
+      );
+
+      await service.escalateConversation(
+        'tenant-1',
+        'conversation-1',
+        'AI provider unavailable.',
+        ActorType.SYSTEM,
+      );
+
+      expect(auditLog.record).toHaveBeenCalledWith(
+        expect.objectContaining({ actorType: ActorType.SYSTEM }),
+      );
+    });
+
+    it('throws TenantResourceNotFoundException when the conversation does not exist', async () => {
+      repo.findByIdForTenant.mockResolvedValue(null);
+
+      await expect(
+        service.escalateConversation(
+          'tenant-1',
+          'missing',
+          'reason',
+          ActorType.AI,
+        ),
+      ).rejects.toThrow(TenantResourceNotFoundException);
+      expect(repo.escalate).not.toHaveBeenCalled();
     });
   });
 });

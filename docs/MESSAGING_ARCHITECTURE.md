@@ -16,7 +16,7 @@ This document covers what happens to a message once it's inside the platform: th
 - `GET/PATCH /conversations[/:id]`, `GET /messages`, `POST /messages/send`.
 - A two-pane frontend inbox (`/app/conversations[/:id]`): conversation list, message thread, contact panel, composer.
 
-Not built: AI-driven auto-response, conversation escalation/hand-off states, `TemplateMessage`-backed outbound past the 24h window. See ADR-010.
+**Amended Milestone 8 (docs/adr/ADR-011-ai-receptionist.md)** — AI-driven auto-response and conversation escalation/hand-off are now built: `ConversationStatus` gains `ESCALATED` (`Conversation.assignedUserId` distinguishes queued-unclaimed from claimed — see the ADR's narrowing rationale, no separate `HUMAN_HANDLING` state), `senderType: AI` is now a real, populated value on `Message` (previously reserved-but-unused), and a new `PATCH /conversations/:id/assign` endpoint is the human-takeover action. Full reference: docs/AI_ARCHITECTURE.md. Still not built: `TemplateMessage`-backed outbound past the 24h window (unchanged from ADR-010).
 
 ---
 
@@ -33,13 +33,13 @@ resolvedAt, closedAt, createdAt, updatedAt
 
 `customerId`/`whatsappAccountId` use the composite-FK cross-tenant pattern (`(tenantId, id)` compound unique + compound FK) established since Milestone 5 — the database itself rejects linking a customer or WhatsApp account belonging to a different tenant.
 
-`ConversationStatus` is intentionally narrow: `OPEN`/`RESOLVED`/`CLOSED` only. No `ESCALATED`/`HUMAN_HANDLING` — those describe an AI hand-off to a human, and there's no AI auto-responder yet (Milestone 8). Every conversation this milestone defaults to `OPEN` and is monitored by staff directly.
+`ConversationStatus` was `OPEN`/`RESOLVED`/`CLOSED` only through Milestone 7 (every conversation defaulted to `OPEN`, monitored by staff directly — no AI auto-responder existed yet). **Milestone 8 (docs/adr/ADR-011-ai-receptionist.md)** added exactly one further value, `ESCALATED` — not the `HUMAN_HANDLING` this section originally anticipated; see the ADR for why `Conversation.assignedUserId` alone carries that distinction.
 
 ### `Message`
 
 ```
 id, tenantId, conversationId, direction (INBOUND/OUTBOUND),
-senderType (ActorType: USER/SYSTEM/CUSTOMER — AI reserved for Milestone 8),
+senderType (ActorType: USER/SYSTEM/CUSTOMER/AI — AI populated since Milestone 8),
 senderId (nullable, → User, when senderType=USER),
 messageType (TEXT/IMAGE/AUDIO/VIDEO/DOCUMENT/STICKER/LOCATION/INTERACTIVE/UNSUPPORTED),
 content (text body or caption), mediaWhatsappId/mediaMimeType/mediaSha256/
@@ -104,7 +104,7 @@ All conversation/message reads and replies are `STAFF`-broad — replying to a c
 
 ## 7. Deferred / Known Gaps (Not Forgotten)
 
-- **AI auto-response and hand-off** — Milestone 8. `ConversationStatus` has no escalation states yet (§2).
+- ~~**AI auto-response and hand-off**~~ — built Milestone 8 (docs/adr/ADR-011-ai-receptionist.md, docs/AI_ARCHITECTURE.md). `ConversationStatus` gained `ESCALATED` (§2).
 - **Live delivery-status polling in the UI** — `Message.status` updates server-side as Meta's delivery-receipt webhooks arrive, but the frontend does not currently poll/subscribe for live updates after a message is sent; a page refresh reflects the latest state. Real-time UI updates (WebSocket/SSE) are a future enhancement, not required by this milestone's brief.
 - **`TemplateMessage` registry** — see WHATSAPP_ARCHITECTURE.md §8.
 - **Conversation assignment UI** — `Conversation.assignedUserId` and `ConversationsService.assignUser` exist at the service layer; no frontend control surfaces it yet (not requested this pass).

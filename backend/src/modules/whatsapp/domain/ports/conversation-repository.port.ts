@@ -44,6 +44,12 @@ export interface ConversationRepositoryPort {
     id: string,
     userId: string | null,
   ): Promise<ConversationEntity>;
+  /** Milestone 8 (docs/adr/ADR-011-ai-receptionist.md): sets `status: ESCALATED` + `escalatedAt`/`escalationReason`. */
+  escalate(
+    tenantId: string,
+    id: string,
+    reason: string | null,
+  ): Promise<ConversationEntity>;
   /** Bumps `lastMessageAt` always; also bumps `lastInboundMessageAt` when `isInbound`. */
   touchLastMessage(
     tenantId: string,

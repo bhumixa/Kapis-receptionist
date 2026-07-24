@@ -37,6 +37,7 @@ function makeMessage(overrides: Partial<MessageEntity> = {}): MessageEntity {
     status: MessageDeliveryStatus.QUEUED,
     failureReason: null,
     sourceWebhookEventId: null,
+    aiPromptVersion: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -53,6 +54,8 @@ function makeConversation(): ConversationEntity {
     assignedUserId: null,
     lastMessageAt: null,
     lastInboundMessageAt: new Date(),
+    escalatedAt: null,
+    escalationReason: null,
     resolvedAt: null,
     closedAt: null,
     createdAt: new Date(),
@@ -93,6 +96,7 @@ describe('OutboundMessageService', () => {
       create: jest.fn(),
       updateStatus: jest.fn(),
       assignUser: jest.fn(),
+      escalate: jest.fn(),
       touchLastMessage: jest.fn(),
     };
     conversationsService = {

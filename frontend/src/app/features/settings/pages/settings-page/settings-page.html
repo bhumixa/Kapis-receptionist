@@ -156,6 +156,208 @@
     }
   </section>
 
+  <!-- AI Behavior (Milestone 8, docs/adr/ADR-011-ai-receptionist.md) -->
+  @if (canManageAi()) {
+    <section>
+      <h2 class="text-base font-semibold text-gray-900 mb-1">AI Behavior</h2>
+      <p class="text-sm text-gray-500 mb-4">
+        Configure how your AI receptionist greets customers, its tone, and when it hands off to
+        a team member.
+      </p>
+
+      @if (isLoadingAi()) {
+        <p class="text-sm text-gray-500">Loading...</p>
+      } @else {
+        @if (aiSaved()) {
+          <div class="mb-4 rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">
+            AI behavior updated.
+          </div>
+        }
+        @if (aiError(); as message) {
+          <div class="mb-4 rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800" role="alert">
+            {{ message }}
+          </div>
+        }
+
+        <form [formGroup]="aiForm" (ngSubmit)="saveAiBehavior()" novalidate class="space-y-4">
+          <label class="flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" formControlName="enabled" class="rounded border-gray-300" />
+            AI receptionist enabled
+          </label>
+          <div>
+            <label for="aiTone" class="block text-sm font-medium text-gray-700 mb-1">Tone</label>
+            <input
+              id="aiTone"
+              type="text"
+              formControlName="tone"
+              placeholder="friendly and professional"
+              class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+          </div>
+          <div>
+            <label for="aiGreeting" class="block text-sm font-medium text-gray-700 mb-1">Greeting message</label>
+            <textarea
+              id="aiGreeting"
+              rows="2"
+              formControlName="greetingMessage"
+              placeholder="Hi! Welcome to Bella Salon — how can I help you today?"
+              class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            ></textarea>
+            <!-- Live WhatsApp-bubble preview — a small, high-value touch for a non-technical Owner (FRONTEND_ARCHITECTURE.md 6.9). -->
+            @if (aiForm.controls.greetingMessage.value) {
+              <div class="mt-2 inline-block max-w-sm rounded-lg bg-emerald-100 px-3 py-2 text-sm text-gray-900">
+                {{ aiForm.controls.greetingMessage.value }}
+              </div>
+            }
+          </div>
+          <div>
+            <label for="aiEscalation" class="block text-sm font-medium text-gray-700 mb-1">
+              Escalation instructions
+            </label>
+            <textarea
+              id="aiEscalation"
+              rows="2"
+              formControlName="escalationInstructions"
+              placeholder="Always escalate refund or deposit questions to a manager."
+              class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            ></textarea>
+          </div>
+          <div>
+            <label for="aiFallback" class="block text-sm font-medium text-gray-700 mb-1">
+              Fallback message (shown if the AI is temporarily unavailable)
+            </label>
+            <textarea
+              id="aiFallback"
+              rows="2"
+              formControlName="fallbackMessage"
+              placeholder="We're experiencing an issue — a team member will follow up shortly."
+              class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            ></textarea>
+          </div>
+          <div class="w-48">
+            <label for="aiConfidenceThreshold" class="block text-sm font-medium text-gray-700 mb-1">
+              Repeated-clarification escalation threshold
+            </label>
+            <input
+              id="aiConfidenceThreshold"
+              type="number"
+              min="1"
+              formControlName="confidenceThreshold"
+              class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+          </div>
+
+          <button
+            type="submit"
+            [disabled]="isSavingAi()"
+            class="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+          >
+            {{ isSavingAi() ? 'Saving...' : 'Save AI behavior' }}
+          </button>
+        </form>
+      }
+
+      <!-- Prompt Management -->
+      <div class="mt-8">
+        <h3 class="text-sm font-semibold text-gray-900 mb-2">Prompt versions</h3>
+        @if (isLoadingPromptVersions()) {
+          <p class="text-sm text-gray-500">Loading...</p>
+        } @else if (promptVersions().length === 0) {
+          <p class="text-sm text-gray-500">No prompt versions recorded yet.</p>
+        } @else {
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-gray-500 border-b border-gray-200">
+                <th class="py-2 font-medium">Key</th>
+                <th class="py-2 font-medium">Version</th>
+                <th class="py-2 font-medium">Description</th>
+                <th class="py-2 font-medium">Active</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (version of promptVersions(); track version.id) {
+                <tr class="border-b border-gray-100">
+                  <td class="py-2 font-mono text-xs">{{ version.key }}</td>
+                  <td class="py-2 font-mono text-xs">{{ version.version }}</td>
+                  <td class="py-2 text-gray-600">{{ version.description || '—' }}</td>
+                  <td class="py-2">
+                    @if (version.isActive) {
+                      <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
+                        Active
+                      </span>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        }
+      </div>
+
+      <!-- Test my AI sandbox -->
+      <div class="mt-8">
+        <h3 class="text-sm font-semibold text-gray-900 mb-1">Test my AI</h3>
+        <p class="text-xs text-gray-500 mb-3">
+          Send a message as if you were a customer. Nothing here is sent over WhatsApp or saved
+          to a real conversation — real actions (booking, escalation) are simulated only.
+        </p>
+
+        @if (testError(); as message) {
+          <div class="mb-3 rounded-md bg-red-50 border border-red-200 px-4 py-2 text-sm text-red-800">
+            {{ message }}
+          </div>
+        }
+
+        <div class="flex gap-2 mb-3">
+          <input
+            type="text"
+            [(ngModel)]="testConversationId"
+            [ngModelOptions]="{ standalone: true }"
+            placeholder="Existing conversation ID (optional)"
+            class="w-64 rounded-md border border-gray-300 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-gray-900"
+          />
+        </div>
+        <form (ngSubmit)="sendTestMessage()" class="flex gap-2 mb-3">
+          <input
+            type="text"
+            [(ngModel)]="testMessage"
+            name="testMessage"
+            placeholder="Do you have anything free tomorrow?"
+            class="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+          />
+          <button
+            type="submit"
+            [disabled]="isTesting() || !testMessage().trim()"
+            class="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+          >
+            {{ isTesting() ? 'Thinking...' : 'Send' }}
+          </button>
+        </form>
+
+        @if (testResult(); as result) {
+          <div class="rounded-md border border-gray-200 p-4 space-y-2">
+            <div class="inline-block max-w-lg rounded-lg bg-gray-100 px-3 py-2 text-sm text-gray-900">
+              {{ result.replyText }}
+            </div>
+            @if (result.meta.degraded) {
+              <p class="text-xs text-amber-700">
+                The AI provider was unavailable — this is the fallback response.
+              </p>
+            }
+            @if (result.toolCallsExecuted.length > 0) {
+              <p class="text-xs text-gray-500">
+                Tools called: {{ result.toolCallsExecuted.length }} — simulated, no real action taken.
+              </p>
+            }
+            @if (result.promptVersion) {
+              <p class="text-xs text-gray-400">Prompt version: {{ result.promptVersion }}</p>
+            }
+          </div>
+        }
+      </div>
+    </section>
+  }
+
   <!-- Team invitations -->
   @if (canInviteStaff()) {
     <section>

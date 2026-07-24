@@ -1,12 +1,18 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import {
   ActorType,
+  ConversationStatus,
   MessageDeliveryStatus,
   MessageType,
   WebhookProcessingStatus,
 } from '@prisma/client';
 import { RedisService } from '../../../database/redis.service';
 import { CustomerService } from '../../customers/application/customer.service';
+// Genuine, intentional circular module dependency (ai.module.ts's doc
+// comment) — resolved with forwardRef on both sides (see the constructor
+// injection below), the same pattern core.module.ts/auth.module.ts/
+// tenants.module.ts already established for their own cycles.
+import { ConversationOrchestratorService } from '../../ai/application/conversation-orchestrator.service';
 import { ConversationsService } from './conversations.service';
 import {
   MESSAGE_REPOSITORY,
@@ -201,6 +207,8 @@ export class InboundMessageProcessorService {
     private readonly conversationsService: ConversationsService,
     private readonly customerService: CustomerService,
     private readonly redis: RedisService,
+    @Inject(forwardRef(() => ConversationOrchestratorService))
+    private readonly orchestrator: ConversationOrchestratorService,
   ) {}
 
   async process(webhookEventId: string): Promise<void> {
@@ -344,6 +352,49 @@ export class InboundMessageProcessorService {
       occurredAt,
       true,
     );
+
+    await this.triggerAiResponse(tenantId, conversation, mapped.content);
+  }
+
+  /**
+   * Hands off to the AI module (SYSTEM_ARCHITECTURE.md 6.2/5.1-5.10,
+   * docs/adr/ADR-011-ai-receptionist.md) — in-process, no HTTP hop, as a
+   * normal injected provider call. Skipped entirely when the conversation
+   * is already `ESCALATED` (the AI must not auto-respond after hand-off,
+   * SYSTEM_ARCHITECTURE.md 5.8) or when the inbound message carried no
+   * text content (pure media with no caption — nothing to feed the model;
+   * left for staff to review). Failures are caught and logged, never
+   * rethrown: the `Message` row above was already correctly persisted, and
+   * letting an AI failure fail this whole BullMQ job would mark it FAILED
+   * and retry — which would skip re-persisting the (already-existing)
+   * message on retry but also skip ever attempting the AI response again,
+   * leaving the customer's message unanswered forever. `runTurn` itself
+   * already handles the expected failure mode (LLM provider unavailable)
+   * gracefully with a fallback + auto-escalation; this catch is the
+   * defensive backstop for anything else.
+   */
+  private async triggerAiResponse(
+    tenantId: string,
+    conversation: { id: string; status: ConversationStatus },
+    content: string | null,
+  ): Promise<void> {
+    if (conversation.status === ConversationStatus.ESCALATED || !content) {
+      return;
+    }
+    try {
+      await this.orchestrator.runTurn({
+        tenantId,
+        conversationId: conversation.id,
+        message: content,
+        persist: true,
+      });
+    } catch (error) {
+      this.logger.error(
+        `AI orchestration failed for conversation ${conversation.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   private async processStatusUpdate(status: RawStatus): Promise<void> {

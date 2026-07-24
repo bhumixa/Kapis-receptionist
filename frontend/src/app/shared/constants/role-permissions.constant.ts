@@ -25,6 +25,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, readonly string[]> = {
     'customers:manage',
     'appointments:manage',
     'whatsapp:manage',
+    'ai:manage',
   ],
   OWNER: [
     'billing:manage',
@@ -38,6 +39,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, readonly string[]> = {
     'customers:manage',
     'appointments:manage',
     'whatsapp:manage',
+    'ai:manage',
   ],
   MANAGER: [
     'staff:invite',
@@ -49,6 +51,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, readonly string[]> = {
     'customers:manage',
     'appointments:manage',
     'whatsapp:manage',
+    'ai:manage',
   ],
   STAFF: [],
 };

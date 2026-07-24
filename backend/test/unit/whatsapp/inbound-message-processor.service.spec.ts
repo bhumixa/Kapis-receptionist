@@ -6,6 +6,7 @@ import {
   WebhookProcessingStatus,
 } from '@prisma/client';
 import { InboundMessageProcessorService } from '../../../src/modules/whatsapp/application/inbound-message-processor.service';
+import { ConversationOrchestratorService } from '../../../src/modules/ai/application/conversation-orchestrator.service';
 import { WebhookEventRepositoryPort } from '../../../src/modules/whatsapp/domain/ports/webhook-event-repository.port';
 import { WhatsAppAccountRepositoryPort } from '../../../src/modules/whatsapp/domain/ports/whatsapp-account-repository.port';
 import { MessageRepositoryPort } from '../../../src/modules/whatsapp/domain/ports/message-repository.port';
@@ -43,6 +44,8 @@ function makeConversation(): ConversationEntity {
     assignedUserId: null,
     lastMessageAt: null,
     lastInboundMessageAt: null,
+    escalatedAt: null,
+    escalationReason: null,
     resolvedAt: null,
     closedAt: null,
     createdAt: new Date(),
@@ -105,6 +108,9 @@ describe('InboundMessageProcessorService', () => {
     Pick<CustomerService, 'findOrCreateByPhoneForTenant'>
   >;
   let redis: jest.Mocked<Pick<RedisService, 'set'>>;
+  let orchestrator: jest.Mocked<
+    Pick<ConversationOrchestratorService, 'runTurn'>
+  >;
   let processor: InboundMessageProcessorService;
 
   beforeEach(() => {
@@ -140,6 +146,7 @@ describe('InboundMessageProcessorService', () => {
         .mockResolvedValue({ id: 'customer-1' }),
     };
     redis = { set: jest.fn().mockResolvedValue('OK') };
+    orchestrator = { runTurn: jest.fn().mockResolvedValue(undefined) };
 
     processor = new InboundMessageProcessorService(
       webhookEvents,
@@ -148,6 +155,7 @@ describe('InboundMessageProcessorService', () => {
       conversationsService as unknown as ConversationsService,
       customerService as unknown as CustomerService,
       redis as unknown as RedisService,
+      orchestrator as unknown as ConversationOrchestratorService,
     );
   });
 

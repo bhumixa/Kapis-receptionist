@@ -9,6 +9,8 @@ export class ConversationResponseDto {
   @ApiProperty({ nullable: true }) assignedUserId!: string | null;
   @ApiProperty({ nullable: true }) lastMessageAt!: string | null;
   @ApiProperty({ nullable: true }) lastInboundMessageAt!: string | null;
+  @ApiProperty({ nullable: true }) escalatedAt!: string | null;
+  @ApiProperty({ nullable: true }) escalationReason!: string | null;
   @ApiProperty({ nullable: true }) resolvedAt!: string | null;
   @ApiProperty({ nullable: true }) closedAt!: string | null;
   @ApiProperty() createdAt!: string;

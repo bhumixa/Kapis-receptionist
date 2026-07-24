@@ -25,6 +25,7 @@ import {
   decodeCursor,
 } from '../../../common/utils/cursor-pagination.util';
 import { ConversationsService } from '../application/conversations.service';
+import { AssignConversationDto } from './dto/assign-conversation.dto';
 import {
   ListConversationsQueryDto,
   parseConversationSort,
@@ -94,6 +95,32 @@ export class ConversationsController {
       id,
       actor,
       dto.status,
+    );
+    return toConversationResponseDto(conversation);
+  }
+
+  /**
+   * Milestone 8's "take over" action (docs/adr/ADR-011-ai-receptionist.md,
+   * FRONTEND_ARCHITECTURE.md 6.6) — a staff member claiming an `ESCALATED`
+   * conversation (or unassigning by passing `userId: null`). A dedicated
+   * action endpoint, not folded into the generic status `PATCH`, matching
+   * this API's existing `.../cancel`/`.../reschedule` precedent for a
+   * distinct, audit-worthy action.
+   */
+  @Patch(':id/assign')
+  @UseGuards(TenantActiveGuard)
+  @Roles(RoleName.STAFF)
+  async assign(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AssignConversationDto,
+    @CurrentUser() actor: AccessTokenPayload,
+  ) {
+    const tenantId = await this.tenantContext.requireTenantId();
+    const conversation = await this.conversations.assignUser(
+      tenantId,
+      id,
+      actor,
+      dto.userId ?? null,
     );
     return toConversationResponseDto(conversation);
   }

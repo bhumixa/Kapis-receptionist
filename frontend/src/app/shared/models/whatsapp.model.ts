@@ -1,6 +1,6 @@
 /** Mirrors `backend/src/modules/whatsapp/interface/dto/*.dto.ts`. */
 
-export type ConversationStatus = 'OPEN' | 'RESOLVED' | 'CLOSED';
+export type ConversationStatus = 'OPEN' | 'ESCALATED' | 'RESOLVED' | 'CLOSED';
 
 export interface Conversation {
   id: string;
@@ -10,6 +10,8 @@ export interface Conversation {
   assignedUserId: string | null;
   lastMessageAt: string | null;
   lastInboundMessageAt: string | null;
+  escalatedAt: string | null;
+  escalationReason: string | null;
   resolvedAt: string | null;
   closedAt: string | null;
   createdAt: string;
@@ -18,6 +20,7 @@ export interface Conversation {
 
 export const CONVERSATION_STATUS_LABELS: Record<ConversationStatus, string> = {
   OPEN: 'Open',
+  ESCALATED: 'Escalated',
   RESOLVED: 'Resolved',
   CLOSED: 'Closed',
 };
@@ -50,6 +53,7 @@ export interface Message {
   mediaSizeBytes: number | null;
   status: MessageDeliveryStatus;
   failureReason: string | null;
+  aiPromptVersion: string | null;
   createdAt: string;
   updatedAt: string;
 }

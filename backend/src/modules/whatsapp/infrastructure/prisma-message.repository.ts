@@ -88,6 +88,7 @@ export class PrismaMessageRepository
       whatsappMessageId: input.whatsappMessageId ?? null,
       status: input.status,
       sourceWebhookEventId: input.sourceWebhookEventId ?? null,
+      aiPromptVersion: input.aiPromptVersion ?? null,
     });
     return toMessageEntity(row);
   }

@@ -117,3 +117,23 @@ export const whatsappConfig = registerAs('whatsapp', () => ({
     process.env.WHATSAPP_GRAPH_API_BASE_URL ??
     'https://graph.facebook.com/v21.0',
 }));
+
+/**
+ * AI Receptionist (Milestone 8, docs/AI_ARCHITECTURE.md). `internalApiKey`
+ * backs `InternalServiceAuthGuard` (core/guards/) — the shared secret for
+ * the `X-Internal-Api-Key` header on `POST /ai/tools/*` and internal-mode
+ * `POST /ai/chat`, independent of any tenant/user credential.
+ */
+export const aiConfig = registerAs('ai', () => ({
+  openaiApiKey: process.env.OPENAI_API_KEY,
+  openaiModel: process.env.OPENAI_MODEL ?? 'gpt-4o-mini',
+  openaiBaseUrl: process.env.OPENAI_BASE_URL || null,
+  requestTimeoutMs: parseInt(process.env.AI_REQUEST_TIMEOUT_MS ?? '8000', 10),
+  maxRetries: parseInt(process.env.AI_MAX_RETRIES ?? '2', 10),
+  maxHistoryMessages: parseInt(process.env.AI_MAX_HISTORY_MESSAGES ?? '20', 10),
+  internalApiKey: process.env.AI_INTERNAL_API_KEY,
+  rateLimitPerMinute: parseInt(
+    process.env.AI_RATE_LIMIT_PER_MINUTE ?? '30',
+    10,
+  ),
+}));

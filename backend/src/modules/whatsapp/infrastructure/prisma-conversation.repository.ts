@@ -112,6 +112,19 @@ export class PrismaConversationRepository
     return toConversationEntity(row);
   }
 
+  async escalate(
+    tenantId: string,
+    id: string,
+    reason: string | null,
+  ): Promise<ConversationEntity> {
+    const row = await this.updateForTenant(tenantId, id, {
+      status: ConversationStatus.ESCALATED,
+      escalatedAt: new Date(),
+      escalationReason: reason,
+    });
+    return toConversationEntity(row);
+  }
+
   async touchLastMessage(
     tenantId: string,
     id: string,

@@ -31,6 +31,7 @@ export interface MessageEntity {
   status: MessageDeliveryStatus;
   failureReason: string | null;
   sourceWebhookEventId: string | null;
+  aiPromptVersion: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

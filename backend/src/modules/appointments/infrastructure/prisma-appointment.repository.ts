@@ -121,7 +121,7 @@ export class PrismaAppointmentRepository implements AppointmentRepositoryPort {
             status: appointment.status,
             startTime: appointment.startTime.toISOString(),
           },
-          actorType: ActorType.USER,
+          actorType: input.actorType,
           actorId: input.actorId,
         },
       });
@@ -148,7 +148,11 @@ export class PrismaAppointmentRepository implements AppointmentRepositoryPort {
   async cancel(
     tenantId: string,
     id: string,
-    input: { reason: string | null; actorId: string },
+    input: {
+      reason: string | null;
+      actorType: ActorType;
+      actorId: string | null;
+    },
   ): Promise<AppointmentEntity> {
     const row = await this.prisma.$transaction(async (tx) => {
       const appointment = await tx.appointment.update({
@@ -172,7 +176,7 @@ export class PrismaAppointmentRepository implements AppointmentRepositoryPort {
             cancelledAt: appointment.cancelledAt?.toISOString(),
             reason: input.reason,
           },
-          actorType: ActorType.USER,
+          actorType: input.actorType,
           actorId: input.actorId,
         },
       });
@@ -222,7 +226,7 @@ export class PrismaAppointmentRepository implements AppointmentRepositoryPort {
             status: newRow.status,
             startTime: newRow.startTime.toISOString(),
           },
-          actorType: ActorType.USER,
+          actorType: newAppointment.actorType,
           actorId: newAppointment.actorId,
         },
       });
@@ -245,7 +249,7 @@ export class PrismaAppointmentRepository implements AppointmentRepositoryPort {
             status: 'RESCHEDULED',
             rescheduledToAppointmentId: newRow.id,
           },
-          actorType: ActorType.USER,
+          actorType: newAppointment.actorType,
           actorId: newAppointment.actorId,
         },
       });

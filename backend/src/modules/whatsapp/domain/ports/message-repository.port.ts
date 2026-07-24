@@ -19,6 +19,8 @@ export interface CreateMessageInput {
   whatsappMessageId?: string | null;
   status: MessageDeliveryStatus;
   sourceWebhookEventId?: string | null;
+  /** Milestone 8 (docs/adr/ADR-011-ai-receptionist.md): set when `senderType: AI`. */
+  aiPromptVersion?: string | null;
 }
 
 export interface MessageListFilter {

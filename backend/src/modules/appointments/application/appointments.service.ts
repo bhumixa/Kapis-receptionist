@@ -58,6 +58,21 @@ export interface RescheduleAppointmentRequest {
   services?: AppointmentServiceLineRequest[];
 }
 
+/**
+ * The AI-orchestration actor shape (docs/adr/ADR-011-ai-receptionist.md) —
+ * used by the `*ForAi` sibling methods below instead of the human-JWT
+ * `AccessTokenPayload` every other method here takes. There is no `User`
+ * row to attribute an AI/customer-initiated action to, so `actorId` is
+ * always `null`; `conversationId` is carried for audit-log traceability
+ * (never persisted onto `Appointment`/`AppointmentStatusHistory` directly —
+ * no schema column exists for it, by design, matching this milestone's
+ * "extend `AuditLog.metadata`, don't grow the appointments schema" scope).
+ */
+export interface AiActorContext {
+  actorType: typeof ActorType.AI | typeof ActorType.CUSTOMER;
+  conversationId: string;
+}
+
 interface BuiltLine extends AppointmentServiceLineInput {
   currency: string;
 }
@@ -139,6 +154,7 @@ export class AppointmentsService {
           currency: lines[0].currency,
           notes: request.notes ?? null,
           lines,
+          actorType: ActorType.USER,
           actorId: actor.sub,
         },
         'CREATED',
@@ -154,6 +170,64 @@ export class AppointmentsService {
         metadata: {
           customerId: request.customerId,
           serviceCount: lines.length,
+        },
+      });
+
+      return appointment;
+    });
+  }
+
+  /**
+   * AI-orchestration sibling of `createAppointment` (docs/adr/
+   * ADR-011-ai-receptionist.md) — identical booking/conflict-prevention
+   * path (`buildLines`/`withEmployeeLocks`/`createWithConflictHandling`),
+   * differing only in actor attribution: no `AccessTokenPayload`/STAFF
+   * scoping applies (an AI/customer-initiated booking always acts at
+   * full-tenant scope, the same reach as OWNER/MANAGER), and the resulting
+   * `AppointmentStatusHistory`/`AuditLog` rows record the real
+   * `actorType`/`conversationId` instead of a fabricated `User` identity.
+   */
+  async createAppointmentForAi(
+    tenantId: string,
+    request: CreateAppointmentRequest,
+    aiActor: AiActorContext,
+  ): Promise<AppointmentEntity> {
+    await this.assertCustomerBelongsToTenant(tenantId, request.customerId);
+    const lines = await this.buildLines(
+      tenantId,
+      request.startTime,
+      request.services,
+    );
+
+    return this.withEmployeeLocks(tenantId, lines, async () => {
+      const appointment = await this.createWithConflictHandling(
+        tenantId,
+        {
+          customerId: request.customerId,
+          employeeId: lines[0].employeeId,
+          startTime: lines[0].startTime,
+          endTime: lines.at(-1)!.endTime,
+          totalPriceCents: sumPrice(lines),
+          currency: lines[0].currency,
+          notes: request.notes ?? null,
+          lines,
+          actorType: aiActor.actorType,
+          actorId: null,
+        },
+        'CREATED',
+      );
+
+      await this.auditLog.record({
+        action: 'APPOINTMENT_CREATED',
+        entityType: 'Appointment',
+        entityId: appointment.id,
+        actorType: aiActor.actorType,
+        actorId: null,
+        tenantId,
+        metadata: {
+          customerId: request.customerId,
+          serviceCount: lines.length,
+          conversationId: aiActor.conversationId,
         },
       });
 
@@ -202,6 +276,7 @@ export class AppointmentsService {
 
     const cancelled = await this.appointments.cancel(tenantId, id, {
       reason: reason ?? null,
+      actorType: ActorType.USER,
       actorId: actor.sub,
     });
 
@@ -213,6 +288,48 @@ export class AppointmentsService {
       actorId: actor.sub,
       tenantId,
       metadata: { reason: reason ?? null },
+    });
+
+    return { appointment: cancelled, warnings };
+  }
+
+  /**
+   * AI-orchestration sibling of `cancelAppointment` — uses
+   * `getAppointmentForTenant` (no STAFF-ownership scoping) instead of
+   * `getAppointmentForActor`, since an AI/customer-initiated cancellation
+   * always acts at full-tenant scope.
+   */
+  async cancelAppointmentForAi(
+    tenantId: string,
+    id: string,
+    reason: string | undefined,
+    aiActor: AiActorContext,
+  ): Promise<{ appointment: AppointmentEntity; warnings: string[] }> {
+    const current = await this.getAppointmentForTenant(tenantId, id);
+    assertCancellableStatus(current.status, 'cancel');
+
+    const warnings = await this.buildLateNoticeWarnings(
+      tenantId,
+      current.startTime,
+    );
+
+    const cancelled = await this.appointments.cancel(tenantId, id, {
+      reason: reason ?? null,
+      actorType: aiActor.actorType,
+      actorId: null,
+    });
+
+    await this.auditLog.record({
+      action: 'APPOINTMENT_CANCELLED',
+      entityType: 'Appointment',
+      entityId: id,
+      actorType: aiActor.actorType,
+      actorId: null,
+      tenantId,
+      metadata: {
+        reason: reason ?? null,
+        conversationId: aiActor.conversationId,
+      },
     });
 
     return { appointment: cancelled, warnings };
@@ -263,6 +380,7 @@ export class AppointmentsService {
             currency: lines[0].currency,
             notes: current.notes,
             lines,
+            actorType: ActorType.USER,
             actorId: actor.sub,
           });
         } catch (error) {
@@ -284,6 +402,85 @@ export class AppointmentsService {
       metadata: {
         newAppointmentId: newAppointment.id,
         newStartTime: request.newStartTime.toISOString(),
+      },
+    });
+
+    return { originalAppointment: original, newAppointment, warnings };
+  }
+
+  /**
+   * AI-orchestration sibling of `rescheduleAppointment` — uses
+   * `getAppointmentForTenant` (no STAFF-ownership scoping) instead of
+   * `getAppointmentForActor`.
+   */
+  async rescheduleAppointmentForAi(
+    tenantId: string,
+    id: string,
+    request: RescheduleAppointmentRequest,
+    aiActor: AiActorContext,
+  ): Promise<{
+    originalAppointment: AppointmentEntity;
+    newAppointment: AppointmentEntity;
+    warnings: string[];
+  }> {
+    const current = await this.getAppointmentForTenant(tenantId, id);
+    assertCancellableStatus(current.status, 'reschedule');
+
+    const warnings = await this.buildLateNoticeWarnings(
+      tenantId,
+      current.startTime,
+    );
+
+    const lineRequests: AppointmentServiceLineRequest[] =
+      request.services ??
+      current.services.map((line) => ({
+        serviceId: line.serviceId,
+        employeeId: line.employeeId,
+      }));
+
+    const lines = await this.buildLines(
+      tenantId,
+      request.newStartTime,
+      lineRequests,
+    );
+
+    const { original, newAppointment } = await this.withEmployeeLocks(
+      tenantId,
+      lines,
+      async () => {
+        try {
+          return await this.appointments.reschedule(tenantId, id, {
+            customerId: current.customerId,
+            employeeId: lines[0].employeeId,
+            startTime: lines[0].startTime,
+            endTime: lines.at(-1)!.endTime,
+            totalPriceCents: sumPrice(lines),
+            currency: lines[0].currency,
+            notes: current.notes,
+            lines,
+            actorType: aiActor.actorType,
+            actorId: null,
+          });
+        } catch (error) {
+          if (isExclusionConstraintViolation(error)) {
+            throw new SlotNoLongerAvailableException();
+          }
+          throw error;
+        }
+      },
+    );
+
+    await this.auditLog.record({
+      action: 'APPOINTMENT_RESCHEDULED',
+      entityType: 'Appointment',
+      entityId: id,
+      actorType: aiActor.actorType,
+      actorId: null,
+      tenantId,
+      metadata: {
+        newAppointmentId: newAppointment.id,
+        newStartTime: request.newStartTime.toISOString(),
+        conversationId: aiActor.conversationId,
       },
     });
 
@@ -496,6 +693,22 @@ export class AppointmentsService {
       throw new TenantResourceNotFoundException();
     }
     await this.assertStaffCanAccess(tenantId, appointment, actor);
+    return appointment;
+  }
+
+  /**
+   * AI-orchestration counterpart of `getAppointmentForActor` — no
+   * `AccessTokenPayload`/STAFF-ownership check, since an AI/customer call
+   * always acts at full-tenant scope (docs/adr/ADR-011-ai-receptionist.md).
+   */
+  private async getAppointmentForTenant(
+    tenantId: string,
+    id: string,
+  ): Promise<AppointmentEntity> {
+    const appointment = await this.appointments.findByIdForTenant(tenantId, id);
+    if (!appointment) {
+      throw new TenantResourceNotFoundException();
+    }
     return appointment;
   }
 

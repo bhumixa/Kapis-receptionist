@@ -1,7 +1,8 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { CoreModule } from '../../core/core.module';
 import { AuthModule } from '../auth/auth.module';
 import { IdempotencyModule } from '../../core/idempotency/idempotency.module';
+import { AiModule } from '../ai/ai.module';
 import { CustomersModule } from '../customers/customers.module';
 import { WhatsAppQueueModule } from './queues/whatsapp-queue.module';
 import { WhatsAppInboundProcessor } from './queues/whatsapp-inbound.processor';
@@ -44,6 +45,7 @@ import { WebhooksController } from './interface/webhooks.controller';
     IdempotencyModule,
     CustomersModule,
     WhatsAppQueueModule,
+    forwardRef(() => AiModule),
   ],
   controllers: [
     WebhooksController,

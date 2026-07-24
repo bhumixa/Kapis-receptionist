@@ -40,6 +40,8 @@ export function toConversationEntity(
     assignedUserId: row.assignedUserId,
     lastMessageAt: row.lastMessageAt,
     lastInboundMessageAt: row.lastInboundMessageAt,
+    escalatedAt: row.escalatedAt,
+    escalationReason: row.escalationReason,
     resolvedAt: row.resolvedAt,
     closedAt: row.closedAt,
     createdAt: row.createdAt,
@@ -66,6 +68,7 @@ export function toMessageEntity(row: PrismaMessage): MessageEntity {
     status: row.status,
     failureReason: row.failureReason,
     sourceWebhookEventId: row.sourceWebhookEventId,
+    aiPromptVersion: row.aiPromptVersion,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

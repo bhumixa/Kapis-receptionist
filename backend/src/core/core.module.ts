@@ -2,6 +2,8 @@ import { forwardRef, Module } from '@nestjs/common';
 import { AuthModule } from '../modules/auth/auth.module';
 import { AuditLogModule } from './audit/audit-log.module';
 import { TenantContextService } from './context/tenant-context.service';
+import { AiChatAuthGuard } from './guards/ai-chat-auth.guard';
+import { InternalServiceAuthGuard } from './guards/internal-service-auth.guard';
 import { PermissionGuard } from './guards/permission.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { SuperAdminGuard } from './guards/super-admin.guard';
@@ -43,6 +45,8 @@ import { EncryptionModule } from './security/encryption.module';
     TenantActiveGuard,
     SuperAdminGuard,
     TenantMiddleware,
+    InternalServiceAuthGuard,
+    AiChatAuthGuard,
   ],
   // SuperAdminBypassService is exported alongside the guards that depend on
   // it (RolesGuard/PermissionGuard) — a guard used via `@UseGuards()` in a
@@ -60,6 +64,8 @@ import { EncryptionModule } from './security/encryption.module';
     TenantMiddleware,
     AuditLogModule,
     EncryptionModule,
+    InternalServiceAuthGuard,
+    AiChatAuthGuard,
   ],
 })
 export class CoreModule {}

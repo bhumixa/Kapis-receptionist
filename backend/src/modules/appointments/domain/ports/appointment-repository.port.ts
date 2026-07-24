@@ -1,4 +1,4 @@
-import { AppointmentStatus } from '@prisma/client';
+import { ActorType, AppointmentStatus } from '@prisma/client';
 import type { CursorPayload } from '../../../../common/utils/cursor-pagination.util';
 import { AppointmentEntity } from '../entities/appointment.entity';
 
@@ -26,7 +26,13 @@ export interface CreateAppointmentInput {
   currency: string;
   notes?: string | null;
   lines: AppointmentServiceLineInput[];
-  actorId: string;
+  // `actorType`/`actorId: null` added Milestone 8 (docs/adr/
+  // ADR-011-ai-receptionist.md) — every appointment created before this
+  // milestone was staff-initiated (`ActorType.USER`, `actorId` always a
+  // real `User.id`); an AI/customer-initiated booking has no `User` row to
+  // attribute to.
+  actorType: ActorType;
+  actorId: string | null;
   rescheduledFromAppointmentId?: string;
 }
 
@@ -67,7 +73,11 @@ export interface AppointmentRepositoryPort {
   cancel(
     tenantId: string,
     id: string,
-    input: { reason: string | null; actorId: string },
+    input: {
+      reason: string | null;
+      actorType: ActorType;
+      actorId: string | null;
+    },
   ): Promise<AppointmentEntity>;
   /**
    * Marks the original appointment RESCHEDULED, flips its lines'

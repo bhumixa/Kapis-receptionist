@@ -33,6 +33,8 @@ function makeConversation(
     assignedUserId: null,
     lastMessageAt: new Date(),
     lastInboundMessageAt: new Date(),
+    escalatedAt: null,
+    escalationReason: null,
     resolvedAt: null,
     closedAt: null,
     createdAt: new Date(),
@@ -60,6 +62,7 @@ function makeMessage(overrides: Partial<MessageEntity> = {}): MessageEntity {
     status: MessageDeliveryStatus.QUEUED,
     failureReason: null,
     sourceWebhookEventId: null,
+    aiPromptVersion: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -90,6 +93,7 @@ describe('MessagesService', () => {
       create: jest.fn(),
       updateStatus: jest.fn(),
       assignUser: jest.fn(),
+      escalate: jest.fn(),
       touchLastMessage: jest.fn(),
     };
     outboundQueue = { add: jest.fn().mockResolvedValue(undefined) };
@@ -236,6 +240,80 @@ describe('MessagesService', () => {
         limit: 50,
         conversationId: 'conversation-1',
       });
+    });
+  });
+
+  // Milestone 8 (docs/adr/ADR-011-ai-receptionist.md): the AI-orchestration
+  // sibling of `sendMessage` — same 24h-window rule, `senderType: AI`.
+  describe('sendAiMessage', () => {
+    it('creates a QUEUED AI message, enqueues an outbound job, and records the prompt version', async () => {
+      const conversation = makeConversation({
+        lastInboundMessageAt: new Date(Date.now() - 60 * 1000),
+      });
+      conversations.findByIdForTenant.mockResolvedValue(conversation);
+      const created = makeMessage({
+        senderType: ActorType.AI,
+        senderId: null,
+        aiPromptVersion: 'system-prompt@v1',
+      });
+      messages.create.mockResolvedValue(created);
+
+      const result = await service.sendAiMessage('tenant-1', {
+        conversationId: 'conversation-1',
+        body: 'We have a slot with Ana at 2pm.',
+        promptVersion: 'system-prompt@v1',
+      });
+
+      expect(result).toEqual(created);
+      expect(messages.create).toHaveBeenCalledWith(
+        'tenant-1',
+        expect.objectContaining({
+          senderType: ActorType.AI,
+          senderId: null,
+          aiPromptVersion: 'system-prompt@v1',
+          status: MessageDeliveryStatus.QUEUED,
+        }),
+      );
+      expect(outboundQueue.add).toHaveBeenCalledWith(
+        'send-message',
+        { tenantId: 'tenant-1', messageId: created.id },
+        expect.objectContaining({ attempts: 5 }),
+      );
+      expect(auditLog.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'AI_MESSAGE_SEND_QUEUED',
+          actorType: ActorType.AI,
+          actorId: null,
+        }),
+      );
+    });
+
+    it('is bound by the same 24-hour messaging window as a manual staff reply', async () => {
+      const conversation = makeConversation({
+        lastInboundMessageAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
+      });
+      conversations.findByIdForTenant.mockResolvedValue(conversation);
+
+      await expect(
+        service.sendAiMessage('tenant-1', {
+          conversationId: 'conversation-1',
+          body: 'hello',
+          promptVersion: null,
+        }),
+      ).rejects.toThrow(OutsideMessagingWindowException);
+      expect(messages.create).not.toHaveBeenCalled();
+    });
+
+    it('throws TenantResourceNotFoundException when the conversation does not exist', async () => {
+      conversations.findByIdForTenant.mockResolvedValue(null);
+
+      await expect(
+        service.sendAiMessage('tenant-1', {
+          conversationId: 'missing',
+          body: 'hello',
+          promptVersion: null,
+        }),
+      ).rejects.toThrow(TenantResourceNotFoundException);
     });
   });
 });

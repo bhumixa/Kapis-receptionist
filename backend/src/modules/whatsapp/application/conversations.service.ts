@@ -98,6 +98,42 @@ export class ConversationsService {
   }
 
   /**
+   * `escalateToHuman` tool target (docs/adr/ADR-011-ai-receptionist.md,
+   * SYSTEM_ARCHITECTURE.md 5.8) — moves the conversation to `ESCALATED` so
+   * the AI stops auto-responding on this thread (checked by
+   * `InboundMessageProcessorService` before invoking the orchestrator) and
+   * the conversation surfaces in the inbox's handoff queue. No
+   * `AccessTokenPayload`: the caller is always the AI orchestrator itself
+   * (`ActorType.AI`) or, for the request-timeout/outage fallback path
+   * (SYSTEM_ARCHITECTURE.md 5.10), the platform (`ActorType.SYSTEM`).
+   */
+  async escalateConversation(
+    tenantId: string,
+    id: string,
+    reason: string | null,
+    actorType: typeof ActorType.AI | typeof ActorType.SYSTEM,
+  ): Promise<ConversationEntity> {
+    const current = await this.conversations.findByIdForTenant(tenantId, id);
+    if (!current) {
+      throw new TenantResourceNotFoundException();
+    }
+
+    const updated = await this.conversations.escalate(tenantId, id, reason);
+
+    await this.auditLog.record({
+      action: 'CONVERSATION_ESCALATED',
+      entityType: 'Conversation',
+      entityId: id,
+      actorType,
+      actorId: null,
+      tenantId,
+      metadata: { reason, from: current.status },
+    });
+
+    return updated;
+  }
+
+  /**
    * The "current open thread" resolution (DATABASE_DESIGN.md) — used by
    * `InboundMessageProcessorService` to decide whether an inbound message
    * belongs to an existing open conversation or starts a new one.

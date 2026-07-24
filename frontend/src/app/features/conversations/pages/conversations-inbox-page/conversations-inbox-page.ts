@@ -1,12 +1,16 @@
-import { LowerCasePipe } from '@angular/common';
+import { JsonPipe, LowerCasePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { forkJoin, of } from 'rxjs';
 import { catchError } from 'rxjs/operators';
+import { environment } from '../../../../../environments/environment';
 import { ApiError } from '../../../../core/api/api-error';
+import { AiApiService } from '../../../../core/api/ai-api.service';
 import { ConversationsApiService } from '../../../../core/api/conversations-api.service';
 import { CustomersApiService } from '../../../../core/api/customers-api.service';
+import { AuthStateService } from '../../../../core/auth/auth-state.service';
+import { AiContext } from '../../../../shared/models/ai.model';
 import { Customer } from '../../../../shared/models/customer.model';
 import {
   CONVERSATION_STATUS_LABELS,
@@ -15,6 +19,9 @@ import {
   Message,
   MESSAGE_STATUS_LABELS,
 } from '../../../../shared/models/whatsapp.model';
+
+/** `null` = "All" (no filter). */
+type StatusFilterOption = ConversationStatus | null;
 
 /**
  * `/app/conversations[/:id]` (API_SPECIFICATION.md Section 11,
@@ -31,7 +38,7 @@ import {
 @Component({
   selector: 'app-conversations-inbox-page',
   standalone: true,
-  imports: [FormsModule, LowerCasePipe],
+  imports: [FormsModule, LowerCasePipe, JsonPipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './conversations-inbox-page.html',
 })
@@ -40,9 +47,22 @@ export class ConversationsInboxPage {
   private readonly router = inject(Router);
   private readonly conversationsApi = inject(ConversationsApiService);
   private readonly customersApi = inject(CustomersApiService);
+  private readonly aiApi = inject(AiApiService);
+  private readonly authState = inject(AuthStateService);
 
   readonly statusLabels = CONVERSATION_STATUS_LABELS;
   readonly messageStatusLabels = MESSAGE_STATUS_LABELS;
+  /** Dev-only surface (SYSTEM_ARCHITECTURE.md 5.9's transparency goal at the UI layer) — never shown in production. */
+  readonly isAiDebugAvailable = !environment.production;
+
+  readonly statusFilterOptions: StatusFilterOption[] = [
+    null,
+    'ESCALATED',
+    'OPEN',
+    'RESOLVED',
+    'CLOSED',
+  ];
+  readonly statusFilter = signal<StatusFilterOption>(null);
 
   readonly conversations = signal<Conversation[]>([]);
   readonly customersById = signal<Record<string, Customer>>({});
@@ -57,6 +77,11 @@ export class ConversationsInboxPage {
   readonly isSending = signal(false);
   readonly sendError = signal<string | null>(null);
   readonly statusUpdateError = signal<string | null>(null);
+  readonly assignError = signal<string | null>(null);
+
+  readonly showAiDebugPanel = signal(false);
+  readonly aiContext = signal<AiContext | null>(null);
+  readonly isLoadingAiContext = signal(false);
 
   readonly selectedConversation = computed<Conversation | null>(
     () => this.conversations().find((c) => c.id === this.selectedConversationId()) ?? null,
@@ -65,6 +90,7 @@ export class ConversationsInboxPage {
     const conversation = this.selectedConversation();
     return conversation ? (this.customersById()[conversation.customerId] ?? null) : null;
   });
+  readonly currentUserId = computed(() => this.authState.currentUser()?.id ?? null);
   readonly canReply = computed(() => {
     const conversation = this.selectedConversation();
     if (!conversation?.lastInboundMessageAt) {
@@ -98,14 +124,23 @@ export class ConversationsInboxPage {
     this.selectedConversationId.set(conversation.id);
     this.sendError.set(null);
     this.statusUpdateError.set(null);
+    this.assignError.set(null);
+    this.aiContext.set(null);
+    this.showAiDebugPanel.set(false);
     void this.router.navigate(['/app/conversations', conversation.id]);
     this.loadMessages(conversation.id);
+  }
+
+  setStatusFilter(status: StatusFilterOption): void {
+    this.statusFilter.set(status);
+    this.loadConversations();
   }
 
   private loadConversations(): void {
     this.isLoadingList.set(true);
     this.listError.set(null);
-    this.conversationsApi.listConversations().subscribe({
+    const status = this.statusFilter();
+    this.conversationsApi.listConversations(status ? { status: [status] } : {}).subscribe({
       next: (conversations) => {
         this.conversations.set(conversations);
         this.isLoadingList.set(false);
@@ -189,6 +224,74 @@ export class ConversationsInboxPage {
           error instanceof ApiError ? error.message : 'Could not update status.',
         );
       },
+    });
+  }
+
+  takeOver(): void {
+    const conversation = this.selectedConversation();
+    const userId = this.currentUserId();
+    if (!conversation || !userId) {
+      return;
+    }
+    this.assign(conversation.id, userId);
+  }
+
+  unassign(): void {
+    const conversation = this.selectedConversation();
+    if (!conversation) {
+      return;
+    }
+    this.assign(conversation.id, null);
+  }
+
+  private assign(conversationId: string, userId: string | null): void {
+    this.assignError.set(null);
+    this.conversationsApi.assignUser(conversationId, userId).subscribe({
+      next: (updated) => {
+        this.conversations.set(
+          this.conversations().map((c) => (c.id === updated.id ? updated : c)),
+        );
+      },
+      error: (error: unknown) => {
+        this.assignError.set(
+          error instanceof ApiError ? error.message : 'Could not update assignment.',
+        );
+      },
+    });
+  }
+
+  /** Bubble accent for the AI-vs-staff-vs-customer distinction (FRONTEND_ARCHITECTURE.md 6.6). */
+  senderBadge(message: Message): string | null {
+    switch (message.senderType) {
+      case 'AI':
+        return 'AI';
+      case 'USER':
+        return 'Staff';
+      default:
+        return null;
+    }
+  }
+
+  toggleAiDebugPanel(): void {
+    const next = !this.showAiDebugPanel();
+    this.showAiDebugPanel.set(next);
+    if (next) {
+      this.loadAiContext();
+    }
+  }
+
+  private loadAiContext(): void {
+    const conversation = this.selectedConversation();
+    if (!conversation) {
+      return;
+    }
+    this.isLoadingAiContext.set(true);
+    this.aiApi.getContext(conversation.id).subscribe({
+      next: (context) => {
+        this.aiContext.set(context);
+        this.isLoadingAiContext.set(false);
+      },
+      error: () => this.isLoadingAiContext.set(false),
     });
   }
 }

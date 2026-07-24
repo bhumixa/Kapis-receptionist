@@ -53,6 +53,11 @@ export class ConversationsApiService {
     return this.api.patch<Conversation>(`/conversations/${id}`, { status });
   }
 
+  /** "Take over" (pass a userId) / "unassign" (pass null) — Milestone 8, docs/adr/ADR-011-ai-receptionist.md. */
+  assignUser(id: string, userId: string | null): Observable<Conversation> {
+    return this.api.patch<Conversation>(`/conversations/${id}/assign`, { userId });
+  }
+
   listMessages(conversationId: string): Observable<Message[]> {
     return this.api.get<Message[]>('/messages', {
       params: { conversationId, limit: 200 },

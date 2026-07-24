@@ -523,6 +523,8 @@ frontend/
 
 ## 5. AI Architecture
 
+> **Built Milestone 8 (docs/adr/ADR-011-ai-receptionist.md)** — as-built, matching this section's design closely, with these deviations: `answerFaq`/`checkAvailability` (renamed `bookAppointment`/`rescheduleAppointment`/`cancelAppointment` for the mutating three, to avoid a name collision with the module-level `AppointmentsService` methods they wrap) have no dedicated `/ai/tools/*` HTTP endpoint — only the four the API spec documents do; the other five tools are in-process only. The confidence-threshold escalation in §5.10 is implemented as a repeated-exact-reply counter, not a true model-reported confidence score (OpenAI's Chat Completions API exposes none). No streaming (§5 doesn't mandate it, and no SSE/WebSocket transport exists anywhere in this codebase to build it on). Full as-built reference: docs/AI_ARCHITECTURE.md, docs/PROMPT_ENGINEERING.md, docs/TOOLS.md.
+
 ### 5.1 Prompt Management
 
 - Prompts are treated as **versioned configuration artifacts**, not inline strings scattered through code. A dedicated prompt-template store (files under source control, e.g., `backend/src/modules/ai/prompts/`) holds the base system prompt, per-intent instruction fragments, and tool-result formatting templates.

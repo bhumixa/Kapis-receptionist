@@ -1,4 +1,9 @@
-import { AppointmentStatus, EmployeeStatus, RoleName } from '@prisma/client';
+import {
+  ActorType,
+  AppointmentStatus,
+  EmployeeStatus,
+  RoleName,
+} from '@prisma/client';
 import { AuditLogService } from '../../../src/core/audit/audit-log.service';
 import { TenantResourceNotFoundException } from '../../../src/core/guards/rbac.exceptions';
 import {
@@ -468,6 +473,203 @@ describe('AppointmentsService', () => {
         'tenant-1',
         expect.objectContaining({ employeeId: 'employee-1' }),
       );
+    });
+  });
+
+  // Milestone 8 (docs/adr/ADR-011-ai-receptionist.md): the AI-orchestration
+  // sibling methods — same booking/conflict-prevention path, different
+  // actor attribution, no STAFF-ownership scoping.
+  describe('createAppointmentForAi', () => {
+    const request = {
+      customerId: 'customer-1',
+      startTime: new Date('2026-08-03T14:00:00Z'),
+      services: [{ serviceId: 'service-1', employeeId: 'employee-1' }],
+    };
+    const aiActor = {
+      actorType: ActorType.AI,
+      conversationId: 'conversation-1',
+    };
+
+    it('creates an appointment attributed to the AI actor, not a User', async () => {
+      repo.create.mockResolvedValue(makeAppointment());
+
+      const result = await appointmentsService.createAppointmentForAi(
+        'tenant-1',
+        request,
+        aiActor,
+      );
+
+      expect(result.id).toBe('appointment-1');
+      expect(repo.create).toHaveBeenCalledWith(
+        'tenant-1',
+        expect.objectContaining({ actorType: ActorType.AI, actorId: null }),
+        'CREATED',
+      );
+      expect(auditLog.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'APPOINTMENT_CREATED',
+          actorType: ActorType.AI,
+          actorId: null,
+        }),
+      );
+      const auditCall = auditLog.record.mock.calls[0][0];
+      expect(auditCall.metadata?.['conversationId']).toBe('conversation-1');
+    });
+
+    it('still enforces the two-layer conflict-prevention path (booking lock)', async () => {
+      repo.create.mockResolvedValue(makeAppointment());
+
+      await appointmentsService.createAppointmentForAi(
+        'tenant-1',
+        request,
+        aiActor,
+      );
+
+      expect(bookingLock.acquire).toHaveBeenCalledWith('tenant-1', [
+        'employee-1',
+      ]);
+      expect(bookingLock.release).toHaveBeenCalled();
+    });
+
+    it('rejects a hallucinated serviceId exactly like the human path', async () => {
+      services.findByIdsForTenant.mockResolvedValue([]);
+
+      await expect(
+        appointmentsService.createAppointmentForAi(
+          'tenant-1',
+          request,
+          aiActor,
+        ),
+      ).rejects.toBeInstanceOf(InvalidServiceReferenceException);
+    });
+
+    it('supports actorType CUSTOMER for a customer-initiated-through-AI booking', async () => {
+      repo.create.mockResolvedValue(makeAppointment());
+      const customerActor = {
+        actorType: ActorType.CUSTOMER,
+        conversationId: 'conversation-1',
+      };
+
+      await appointmentsService.createAppointmentForAi(
+        'tenant-1',
+        request,
+        customerActor,
+      );
+
+      expect(repo.create).toHaveBeenCalledWith(
+        'tenant-1',
+        expect.objectContaining({ actorType: ActorType.CUSTOMER }),
+        'CREATED',
+      );
+    });
+  });
+
+  describe('cancelAppointmentForAi', () => {
+    const aiActor = {
+      actorType: ActorType.AI,
+      conversationId: 'conversation-1',
+    };
+
+    it('cancels without any STAFF-ownership check (full-tenant scope)', async () => {
+      repo.findByIdForTenant.mockResolvedValue(makeAppointment());
+      repo.cancel.mockResolvedValue(
+        makeAppointment({ status: AppointmentStatus.CANCELLED }),
+      );
+
+      const result = await appointmentsService.cancelAppointmentForAi(
+        'tenant-1',
+        'appointment-1',
+        'Customer requested via WhatsApp.',
+        aiActor,
+      );
+
+      expect(result.appointment.status).toBe(AppointmentStatus.CANCELLED);
+      expect(employeeService.findByUserId).not.toHaveBeenCalled();
+      expect(repo.cancel).toHaveBeenCalledWith(
+        'tenant-1',
+        'appointment-1',
+        expect.objectContaining({ actorType: ActorType.AI, actorId: null }),
+      );
+    });
+
+    it('rejects cancelling an already-cancelled appointment', async () => {
+      repo.findByIdForTenant.mockResolvedValue(
+        makeAppointment({ status: AppointmentStatus.CANCELLED }),
+      );
+
+      await expect(
+        appointmentsService.cancelAppointmentForAi(
+          'tenant-1',
+          'appointment-1',
+          undefined,
+          aiActor,
+        ),
+      ).rejects.toBeInstanceOf(InvalidStatusTransitionException);
+    });
+
+    it('throws TenantResourceNotFoundException for a nonexistent appointment', async () => {
+      repo.findByIdForTenant.mockResolvedValue(null);
+
+      await expect(
+        appointmentsService.cancelAppointmentForAi(
+          'tenant-1',
+          'missing',
+          undefined,
+          aiActor,
+        ),
+      ).rejects.toBeInstanceOf(TenantResourceNotFoundException);
+    });
+  });
+
+  describe('rescheduleAppointmentForAi', () => {
+    const aiActor = {
+      actorType: ActorType.AI,
+      conversationId: 'conversation-1',
+    };
+    const request = { newStartTime: new Date('2026-08-04T10:00:00Z') };
+
+    it('reschedules attributed to the AI actor and returns both appointments', async () => {
+      repo.findByIdForTenant.mockResolvedValue(makeAppointment());
+      repo.reschedule.mockResolvedValue({
+        original: makeAppointment({ status: AppointmentStatus.RESCHEDULED }),
+        newAppointment: makeAppointment({ id: 'appointment-2' }),
+      });
+
+      const result = await appointmentsService.rescheduleAppointmentForAi(
+        'tenant-1',
+        'appointment-1',
+        request,
+        aiActor,
+      );
+
+      expect(result.newAppointment.id).toBe('appointment-2');
+      expect(repo.reschedule).toHaveBeenCalledWith(
+        'tenant-1',
+        'appointment-1',
+        expect.objectContaining({ actorType: ActorType.AI, actorId: null }),
+      );
+      expect(auditLog.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'APPOINTMENT_RESCHEDULED',
+          actorType: ActorType.AI,
+        }),
+      );
+    });
+
+    it('surfaces a race-lost EXCLUDE-constraint violation as SlotNoLongerAvailableException', async () => {
+      repo.findByIdForTenant.mockResolvedValue(makeAppointment());
+      repo.reschedule.mockRejectedValue(
+        new Error('excl_appointment_services_employee_time'),
+      );
+
+      await expect(
+        appointmentsService.rescheduleAppointmentForAi(
+          'tenant-1',
+          'appointment-1',
+          request,
+          aiActor,
+        ),
+      ).rejects.toBeInstanceOf(SlotNoLongerAvailableException);
     });
   });
 });
