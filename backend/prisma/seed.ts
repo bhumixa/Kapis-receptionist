@@ -3,8 +3,8 @@ import { PrismaClient, RoleName } from '@prisma/client';
 /**
  * Required seed (PRISMA_SCHEMA.md Section 14.3) — runs in every environment,
  * including production, as part of first deploy. Populates the fixed Role
- * rows, a starter Permission set, the RolePermission matrix, and one default
- * Plan tier.
+ * rows, a starter Permission set, the RolePermission matrix, and the
+ * illustrative Plan tiers (Milestone 9, placeholder Stripe Price IDs).
  *
  * The permission set below covers only what SYSTEM_ARCHITECTURE.md Section
  * 7.4 names explicitly today (billing:manage, account:delete, staff:invite)
@@ -84,6 +84,48 @@ const ROLE_PERMISSIONS: Record<RoleName, readonly string[]> = {
   [RoleName.STAFF]: [],
 };
 
+const PLANS = [
+  {
+    name: 'Starter',
+    stripePriceId: 'price_placeholder_starter',
+    monthlyPriceCents: 4900,
+    currency: 'USD',
+    maxStaff: 5,
+    maxMessagesPerMonth: 1000,
+    maxAppointmentsPerMonth: 500,
+    maxLocations: 1,
+    maxStorageMb: 1024,
+    isActive: true,
+    trialDays: 14,
+  },
+  {
+    name: 'Professional',
+    stripePriceId: 'price_placeholder_professional',
+    monthlyPriceCents: 9900,
+    currency: 'USD',
+    maxStaff: 15,
+    maxMessagesPerMonth: 3000,
+    maxAppointmentsPerMonth: 2000,
+    maxLocations: 1,
+    maxStorageMb: 5120,
+    isActive: true,
+    trialDays: 14,
+  },
+  {
+    name: 'Business',
+    stripePriceId: 'price_placeholder_business',
+    monthlyPriceCents: 19900,
+    currency: 'USD',
+    maxStaff: null,
+    maxMessagesPerMonth: 10000,
+    maxAppointmentsPerMonth: null,
+    maxLocations: 3,
+    maxStorageMb: 20480,
+    isActive: true,
+    trialDays: 14,
+  },
+] as const;
+
 const ROLES: Array<{ name: RoleName; description: string }> = [
   {
     name: RoleName.SUPER_ADMIN,
@@ -139,24 +181,23 @@ async function main(): Promise<void> {
     }
   }
 
-  await prisma.plan.upsert({
-    where: { stripePriceId: 'price_placeholder_starter' },
-    update: {},
-    create: {
-      name: 'Starter',
-      stripePriceId: 'price_placeholder_starter',
-      monthlyPriceCents: 4900,
-      currency: 'USD',
-      maxStaff: 5,
-      maxMessagesPerMonth: 1000,
-      maxLocations: 1,
-      isActive: true,
-      trialDays: 14,
-    },
-  });
+  // Milestone 9 (docs/BILLING_ARCHITECTURE.md): three illustrative tiers with
+  // PLACEHOLDER Stripe Price IDs. These do not correspond to real Stripe
+  // Products/Prices — before going live, create matching Products/Prices in
+  // the Stripe Dashboard (test or live mode) and update each row's
+  // `stripePriceId` (via this seed or `PATCH /admin/plans/:id`) to the real
+  // value. `price_placeholder_starter` is unchanged from the Milestone 1
+  // placeholder so existing dev-seeded subscriptions keep a valid FK.
+  for (const plan of PLANS) {
+    await prisma.plan.upsert({
+      where: { stripePriceId: plan.stripePriceId },
+      update: plan,
+      create: plan,
+    });
+  }
 
   console.log(
-    'Seed complete: roles, permissions, role-permissions, and the default plan.',
+    'Seed complete: roles, permissions, role-permissions, and plan tiers.',
   );
 }
 

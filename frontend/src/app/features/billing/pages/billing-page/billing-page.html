@@ -1,0 +1,264 @@
+<div class="max-w-5xl space-y-10">
+  <div>
+    <h1 class="text-xl font-semibold text-gray-900">Billing</h1>
+    <p class="text-sm text-gray-500 mt-1">Manage your subscription, usage, and payment history.</p>
+  </div>
+
+  @if (actionError(); as message) {
+    <div class="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800" role="alert">
+      {{ message }}
+    </div>
+  }
+
+  <!-- Subscription overview -->
+  <section>
+    <h2 class="text-base font-semibold text-gray-900 mb-4">Current plan</h2>
+
+    @if (isLoadingSubscription()) {
+      <p class="text-sm text-gray-500">Loading...</p>
+    } @else if (subscriptionError(); as message) {
+      <div class="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800" role="alert">
+        {{ message }}
+      </div>
+    } @else if (subscription(); as sub) {
+      <div class="rounded-lg border border-gray-200 bg-white p-6">
+        <div class="flex items-start justify-between">
+          <div>
+            <div class="flex items-center gap-3">
+              <span class="text-lg font-semibold text-gray-900">{{ sub.plan.name }}</span>
+              <span
+                class="inline-block rounded-full border px-2.5 py-0.5 text-xs font-medium"
+                [class]="statusBadgeClass(sub.status)"
+              >
+                {{ sub.status }}
+              </span>
+              @if (sub.cancelAtPeriodEnd) {
+                <span class="inline-block rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
+                  Cancels at period end
+                </span>
+              }
+            </div>
+            <p class="mt-1 text-sm text-gray-500">
+              {{ formatCents(sub.plan.monthlyPriceCents, sub.plan.currency) }} / month
+              @if (sub.currentPeriodEnd) {
+                · renews {{ sub.currentPeriodEnd | date: 'mediumDate' }}
+              }
+            </p>
+          </div>
+
+          @if (canManageBilling()) {
+            <div class="flex gap-2">
+              <button
+                type="button"
+                (click)="openCustomerPortal()"
+                [disabled]="isRedirecting() || !sub.hasStripeSubscription"
+                class="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                title="Manage payment method and download invoices"
+              >
+                Manage payment method
+              </button>
+              @if (sub.cancelAtPeriodEnd) {
+                <button
+                  type="button"
+                  (click)="reactivateSubscription()"
+                  [disabled]="isReactivating()"
+                  class="rounded-md bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+                >
+                  {{ isReactivating() ? 'Reactivating...' : 'Reactivate' }}
+                </button>
+              } @else if (sub.status !== 'CANCELED') {
+                <button
+                  type="button"
+                  (click)="cancelSubscription()"
+                  [disabled]="isCanceling()"
+                  class="rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                >
+                  {{ isCanceling() ? 'Canceling...' : 'Cancel subscription' }}
+                </button>
+              }
+            </div>
+          }
+        </div>
+
+        <!-- Usage dashboard -->
+        <div class="mt-6 grid grid-cols-2 gap-6 border-t border-gray-100 pt-6">
+          <div>
+            <div class="flex items-center justify-between text-sm">
+              <span class="font-medium text-gray-700">Staff</span>
+              <span class="text-gray-500">
+                {{ staffCount() ?? '—' }} / {{ sub.plan.maxStaff ?? 'Unlimited' }}
+              </span>
+            </div>
+            @if (sub.plan.maxStaff !== null && staffCount() !== null) {
+              <div class="mt-2 h-2 w-full rounded-full bg-gray-100">
+                <div
+                  class="h-2 rounded-full bg-gray-900"
+                  [style.width.%]="usagePercent(staffCount()!, sub.plan.maxStaff)"
+                ></div>
+              </div>
+            }
+          </div>
+          <div>
+            <div class="flex items-center justify-between text-sm">
+              <span class="font-medium text-gray-700">AI / WhatsApp messages this period</span>
+              <span class="text-gray-500">
+                {{ sub.messagesUsedCurrentPeriod }} / {{ sub.plan.maxMessagesPerMonth ?? 'Unlimited' }}
+              </span>
+            </div>
+            @if (sub.plan.maxMessagesPerMonth !== null) {
+              <div class="mt-2 h-2 w-full rounded-full bg-gray-100">
+                <div
+                  class="h-2 rounded-full bg-gray-900"
+                  [style.width.%]="usagePercent(sub.messagesUsedCurrentPeriod, sub.plan.maxMessagesPerMonth)"
+                ></div>
+              </div>
+            }
+          </div>
+        </div>
+      </div>
+    }
+  </section>
+
+  <!-- Plan comparison -->
+  <section>
+    <h2 class="text-base font-semibold text-gray-900 mb-1">Plans</h2>
+    <p class="text-sm text-gray-500 mb-4">Upgrade or downgrade at any time — changes apply immediately.</p>
+
+    @if (isLoadingPlans()) {
+      <p class="text-sm text-gray-500">Loading...</p>
+    } @else {
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        @for (plan of plans(); track plan.id) {
+          <div
+            class="rounded-lg border p-5"
+            [class]="plan.id === subscription()?.planId ? 'border-gray-900 ring-1 ring-gray-900' : 'border-gray-200'"
+          >
+            <h3 class="text-base font-semibold text-gray-900">{{ plan.name }}</h3>
+            <p class="mt-1 text-2xl font-semibold text-gray-900">
+              {{ formatCents(plan.monthlyPriceCents, plan.currency) }}
+              <span class="text-sm font-normal text-gray-500">/ month</span>
+            </p>
+            <ul class="mt-4 space-y-1.5 text-sm text-gray-600">
+              <li>{{ plan.maxStaff ?? 'Unlimited' }} staff</li>
+              <li>{{ plan.maxMessagesPerMonth ?? 'Unlimited' }} AI/WhatsApp messages / month</li>
+              <li>{{ plan.maxAppointmentsPerMonth ?? 'Unlimited' }} appointments / month</li>
+              <li>{{ plan.maxLocations }} location{{ plan.maxLocations === 1 ? '' : 's' }}</li>
+            </ul>
+
+            @if (canManageBilling()) {
+              @if (plan.id === subscription()?.planId) {
+                <button
+                  type="button"
+                  disabled
+                  class="mt-5 w-full rounded-md border border-gray-200 px-3 py-2 text-sm font-medium text-gray-400"
+                >
+                  Current plan
+                </button>
+              } @else {
+                <button
+                  type="button"
+                  (click)="selectPlan(plan)"
+                  [disabled]="changingPlanId() === plan.id || isRedirecting()"
+                  class="mt-5 w-full rounded-md bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+                >
+                  {{ changingPlanId() === plan.id ? 'Please wait...' : 'Select' }}
+                </button>
+              }
+            }
+          </div>
+        }
+      </div>
+    }
+  </section>
+
+  <!-- Invoice history -->
+  <section>
+    <h2 class="text-base font-semibold text-gray-900 mb-4">Invoices</h2>
+
+    @if (isLoadingInvoices()) {
+      <p class="text-sm text-gray-500">Loading...</p>
+    } @else if (invoices().length === 0) {
+      <p class="text-sm text-gray-500">No invoices yet.</p>
+    } @else {
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-gray-200 text-left text-gray-500">
+            <th class="py-2 font-medium">Date</th>
+            <th class="py-2 font-medium">Amount</th>
+            <th class="py-2 font-medium">Status</th>
+            <th class="py-2 font-medium"></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (invoice of invoices(); track invoice.id) {
+            <tr class="border-b border-gray-100">
+              <td class="py-2.5 text-gray-700">{{ invoice.issuedAt | date: 'mediumDate' }}</td>
+              <td class="py-2.5 text-gray-700">
+                {{ formatCents(invoice.amountPaidCents || invoice.amountDueCents, invoice.currency) }}
+              </td>
+              <td class="py-2.5">
+                <span
+                  class="inline-block rounded-full border px-2.5 py-0.5 text-xs font-medium"
+                  [class]="statusBadgeClass(invoice.status)"
+                >
+                  {{ invoice.status }}
+                </span>
+              </td>
+              <td class="py-2.5 text-right">
+                @if (invoice.invoicePdfUrl) {
+                  <a
+                    [href]="invoice.invoicePdfUrl"
+                    target="_blank"
+                    rel="noopener"
+                    class="text-sm font-medium text-gray-600 hover:text-gray-900"
+                  >
+                    View PDF
+                  </a>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  </section>
+
+  <!-- Payment history -->
+  <section>
+    <h2 class="text-base font-semibold text-gray-900 mb-4">Payment history</h2>
+
+    @if (isLoadingPayments()) {
+      <p class="text-sm text-gray-500">Loading...</p>
+    } @else if (payments().length === 0) {
+      <p class="text-sm text-gray-500">No payments yet.</p>
+    } @else {
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-gray-200 text-left text-gray-500">
+            <th class="py-2 font-medium">Date</th>
+            <th class="py-2 font-medium">Amount</th>
+            <th class="py-2 font-medium">Status</th>
+            <th class="py-2 font-medium">Details</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (payment of payments(); track payment.id) {
+            <tr class="border-b border-gray-100">
+              <td class="py-2.5 text-gray-700">{{ payment.attemptedAt | date: 'mediumDate' }}</td>
+              <td class="py-2.5 text-gray-700">{{ formatCents(payment.amountCents, payment.currency) }}</td>
+              <td class="py-2.5">
+                <span
+                  class="inline-block rounded-full border px-2.5 py-0.5 text-xs font-medium"
+                  [class]="statusBadgeClass(payment.status)"
+                >
+                  {{ payment.status }}
+                </span>
+              </td>
+              <td class="py-2.5 text-gray-500">{{ payment.failureMessage ?? '—' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  </section>
+</div>

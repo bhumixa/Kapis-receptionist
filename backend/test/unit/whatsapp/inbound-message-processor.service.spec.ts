@@ -12,6 +12,7 @@ import { WhatsAppAccountRepositoryPort } from '../../../src/modules/whatsapp/dom
 import { MessageRepositoryPort } from '../../../src/modules/whatsapp/domain/ports/message-repository.port';
 import { ConversationsService } from '../../../src/modules/whatsapp/application/conversations.service';
 import { CustomerService } from '../../../src/modules/customers/application/customer.service';
+import { EntitlementService } from '../../../src/modules/billing/application/entitlement.service';
 import { RedisService } from '../../../src/database/redis.service';
 import { WebhookEventEntity } from '../../../src/modules/whatsapp/domain/entities/webhook-event.entity';
 import { WhatsAppAccountEntity } from '../../../src/modules/whatsapp/domain/entities/whatsapp-account.entity';
@@ -108,6 +109,9 @@ describe('InboundMessageProcessorService', () => {
     Pick<CustomerService, 'findOrCreateByPhoneForTenant'>
   >;
   let redis: jest.Mocked<Pick<RedisService, 'set'>>;
+  let entitlements: jest.Mocked<
+    Pick<EntitlementService, 'checkAndIncrementAiMessageUsage'>
+  >;
   let orchestrator: jest.Mocked<
     Pick<ConversationOrchestratorService, 'runTurn'>
   >;
@@ -146,6 +150,9 @@ describe('InboundMessageProcessorService', () => {
         .mockResolvedValue({ id: 'customer-1' }),
     };
     redis = { set: jest.fn().mockResolvedValue('OK') };
+    entitlements = {
+      checkAndIncrementAiMessageUsage: jest.fn().mockResolvedValue(undefined),
+    };
     orchestrator = { runTurn: jest.fn().mockResolvedValue(undefined) };
 
     processor = new InboundMessageProcessorService(
@@ -155,6 +162,7 @@ describe('InboundMessageProcessorService', () => {
       conversationsService as unknown as ConversationsService,
       customerService as unknown as CustomerService,
       redis as unknown as RedisService,
+      entitlements as unknown as EntitlementService,
       orchestrator as unknown as ConversationOrchestratorService,
     );
   });

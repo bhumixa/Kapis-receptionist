@@ -279,6 +279,10 @@ model Tenant {
   appointments      Appointment[]
   whatsappAccount   WhatsAppAccount?
   conversations     Conversation[]
+  subscription      Subscription?
+  invoices          Invoice[]
+  payments          Payment[]
+  webhookLogs       WebhookLog[]
 
   @@index([status], name: "idx_tenants_status")
   @@map("tenants")
@@ -1008,25 +1012,236 @@ model PromptVersion {
   @@map("prompt_versions")
 }
 
-// --- Billing Models (docs/PRISMA_SCHEMA.md Section 10) ---------------------
-// Subscription/Invoice/Payment/Coupon are deferred to Milestone 8 — Plan has
-// no dependency on them (its back-relation to Subscription is added when
-// Subscription's migration lands).
+// --- Billing Models (Milestone 9, docs/BILLING_ARCHITECTURE.md,
+// docs/STRIPE_INTEGRATION.md, docs/adr/ADR-012-billing-and-subscriptions.md) -
+// Subscription/Invoice/Payment/Coupon/WebhookLog land this milestone; Plan
+// (Milestone 1 global reference data) gains its long-reserved back-relation.
+// Two deliberate deviations from docs/PRISMA_SCHEMA.md Section 10's original
+// design, both documented in ADR-012:
+//  - Invoice.invoicePdfUrl is a bare Stripe-hosted URL string, not an FK to
+//    a `File` model — no Files/S3 module exists yet (same placeholder-string
+//    precedent as SalonProfile.logoUrl, Milestone 4).
+//  - WebhookLog.id uses standard `gen_random_uuid()`, not app-generated
+//    UUIDv7 — mirrors the AuditLog/AppointmentStatusHistory precedent
+//    ("not worth a new dependency at this milestone's volume").
+// Plan.maxAppointmentsPerMonth/maxStorageMb are new columns added this
+// milestone to give EntitlementService a concrete limit to check for two of
+// the feature-gate examples the milestone brief names explicitly
+// (appointment limit, storage quota) — maxStorageMb is carried but not
+// enforced anywhere yet (no Files/S3 module exists to meter usage against
+// it), a documented gap, not an oversight (docs/FEATURE_ENTITLEMENTS.md).
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+  UNPAID
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  UNCOLLECTIBLE
+}
+
+enum PaymentStatus {
+  SUCCEEDED
+  FAILED
+  PENDING
+  REFUNDED
+}
+
+enum CouponDiscountType {
+  PERCENT
+  FIXED
+}
+
+enum CouponDurationType {
+  ONCE
+  REPEATING
+  FOREVER
+}
 
 model Plan {
-  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name                String   @db.VarChar(50)
-  stripePriceId       String   @unique @db.VarChar(100)
-  monthlyPriceCents   Int
-  currency            String   @default("USD") @db.Char(3)
-  maxStaff            Int?
-  maxMessagesPerMonth Int?
-  maxLocations        Int      @default(1)
-  isActive            Boolean  @default(true)
-  trialDays           Int      @default(14)
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                    String   @db.VarChar(50)
+  stripePriceId           String   @unique @db.VarChar(100)
+  monthlyPriceCents       Int
+  currency                String   @default("USD") @db.Char(3)
+  maxStaff                Int?
+  maxMessagesPerMonth     Int?
+  maxLocations            Int      @default(1)
+  maxAppointmentsPerMonth Int?
+  maxStorageMb            Int?
+  isActive                Boolean  @default(true)
+  trialDays               Int      @default(14)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  subscriptions Subscription[]
 
   @@index([isActive], name: "idx_plans_is_active")
   @@map("plans")
+}
+
+// 1:1 with Tenant. `status` is authoritatively driven by Stripe webhooks —
+// application code never writes it directly outside StripeEventProcessorService
+// (this table is a queryable mirror of Stripe's own subscription state, not
+// a second source of truth). `messagesUsedCurrentPeriod` is the concrete
+// counter UsageTrackingService increments and EntitlementService checks
+// against `Plan.maxMessagesPerMonth` — it covers both "AI conversation
+// quota" and "WhatsApp conversation quota" from the milestone brief, since
+// in this product WhatsApp *is* the AI channel (a WhatsApp message that
+// reaches the AI orchestrator is the unit being metered either way) — see
+// docs/FEATURE_ENTITLEMENTS.md for the rationale against a second, redundant
+// counter. Reset to 0 on each `current_period_start` advance (driven by the
+// `invoice.paid` webhook).
+//
+// Deliberate deviation from docs/DATABASE_DESIGN.md Section 3.8.2:
+// `stripeCustomerId` is nullable, not required. A TRIALING `Subscription` is
+// created synchronously at tenant registration (`PrismaRegistrationRepository`)
+// with no Stripe Customer yet — creating one for every trial signup
+// (most of which never convert) is unnecessary Stripe API surface and,
+// more importantly, would make `POST /auth/register` — and, transitively,
+// every `EntitlementService` check's defensive backfill (see
+// `SubscriptionsService.getOrCreateForTenant`) — depend on a live network
+// call to Stripe. The real Stripe Customer is created lazily, exactly once,
+// the first time a tenant actually starts Checkout
+// (`CheckoutService.createCheckoutSession`).
+model Subscription {
+  id                        String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId                  String             @unique @db.Uuid
+  planId                    String             @db.Uuid
+  stripeCustomerId          String?            @db.VarChar(100)
+  stripeSubscriptionId      String?            @unique @db.VarChar(100)
+  status                    SubscriptionStatus @default(TRIALING)
+  currentPeriodStart        DateTime?
+  currentPeriodEnd          DateTime?
+  cancelAtPeriodEnd         Boolean            @default(false)
+  canceledAt                DateTime?
+  couponId                  String?            @db.Uuid
+  messagesUsedCurrentPeriod Int                @default(0)
+  createdAt                 DateTime           @default(now())
+  updatedAt                 DateTime           @updatedAt
+  updatedByType             ActorType          @default(SYSTEM)
+  updatedById               String?            @db.Uuid
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan     Plan      @relation(fields: [planId], references: [id], onDelete: Restrict)
+  coupon   Coupon?   @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  invoices Invoice[]
+
+  @@index([status], name: "idx_subscriptions_status")
+  @@index([stripeCustomerId], name: "idx_subscriptions_stripe_customer_id")
+  @@map("subscriptions")
+}
+
+// Synced from Stripe webhooks only, never app-created. tenantId is
+// denormalized (also reachable via subscription) for direct scoping without
+// a join, consistent with Section 1.11's standard tenant-owned convention.
+model Invoice {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String        @db.Uuid
+  subscriptionId  String        @db.Uuid
+  stripeInvoiceId String        @unique @db.VarChar(100)
+  amountDueCents  Int
+  amountPaidCents Int
+  currency        String        @db.Char(3)
+  status          InvoiceStatus
+  invoicePdfUrl   String?       @db.VarChar(500)
+  issuedAt        DateTime
+  dueAt           DateTime?
+  paidAt          DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  payments     Payment[]
+
+  @@index([tenantId, issuedAt], name: "idx_invoices_tenant_issued")
+  @@map("invoices")
+}
+
+// A payment attempt can exist before/without a finalized invoice in some
+// Stripe flows (e.g. a failed initial charge on checkout) — invoiceId is
+// therefore optional, onDelete: SetNull.
+model Payment {
+  id                    String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId              String        @db.Uuid
+  invoiceId             String?       @db.Uuid
+  stripePaymentIntentId String        @unique @db.VarChar(100)
+  amountCents           Int
+  currency              String        @db.Char(3)
+  status                PaymentStatus
+  failureCode           String?       @db.VarChar(50)
+  failureMessage        String?       @db.VarChar(255)
+  attemptedAt           DateTime
+  createdAt             DateTime      @default(now())
+
+  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoice Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId], name: "idx_payments_tenant_id")
+  @@index([status], name: "idx_payments_status")
+  @@map("payments")
+}
+
+// Global, mirrors a Stripe Coupon. redemptionCount is incremented
+// transactionally by SubscriptionsService when a coupon is applied at
+// checkout; blocked once exhausted/expired at the application layer.
+model Coupon {
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code             String             @unique @db.VarChar(50)
+  stripeCouponId   String             @unique @db.VarChar(100)
+  discountType     CouponDiscountType
+  discountValue    Int
+  durationType     CouponDurationType
+  durationInMonths Int?
+  maxRedemptions   Int?
+  redemptionCount  Int                @default(0)
+  expiresAt        DateTime?
+  isActive         Boolean            @default(true)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  subscriptions Subscription[]
+
+  @@index([isActive], name: "idx_coupons_is_active")
+  @@map("coupons")
+}
+
+// The Stripe analogue of `WebhookEvent` (WhatsApp) — a deliberately separate
+// model, not a shared/polymorphic table, since the two providers have
+// different processing pipelines/signature schemes/consumers (conflating
+// them would force nullable provider-specific columns onto every row).
+// Global ingestion log, written synchronously before any processing;
+// tenantId is nullable because it's resolved asynchronously by the queue
+// worker (via stripeCustomerId lookup against Subscription), and the raw
+// payload is persisted even when signature verification fails, mirroring
+// WebhookEvent's exact forensic-trail rationale. `(provider,
+// providerEventId)` is Stripe's own idempotency key, paired with a fast
+// Redis dedup check (`dedup:stripe:{providerEventId}`) as the first layer —
+// the same two-layer philosophy ADR-009/ADR-010 established.
+model WebhookLog {
+  id               String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider         String                  @db.VarChar(30)
+  providerEventId  String                  @db.VarChar(100)
+  eventType        String                  @db.VarChar(100)
+  payload          Json
+  tenantId         String?                 @db.Uuid
+  processingStatus WebhookProcessingStatus @default(PENDING)
+  processedAt      DateTime?
+  errorMessage     String?                 @db.Text
+  createdAt        DateTime                @default(now())
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, providerEventId], name: "uq_webhook_logs_provider_event")
+  @@index([processingStatus], name: "idx_webhook_logs_processing_status")
+  @@map("webhook_logs")
 }

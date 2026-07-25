@@ -10,11 +10,11 @@ import { PublicLayout } from './layouts/public-layout/public-layout';
 /**
  * Milestone 1's placeholder `/` route, the `/auth/*` slice, and
  * `/app/dashboard` from earlier milestones, extended in Milestone 3
- * (docs/adr/ADR-006) with `/app/settings`, `/app/tenant-suspended`
- * (`tenantActiveGuard`'s redirect target), and the `/admin/*` section
- * (`AdminLayout`, `SUPER_ADMIN`-gated) — the remaining `/app/*` rows
- * (appointments, customers, ...) are built out feature by feature starting
- * Milestone 4/5, once those modules exist.
+ * (docs/adr/ADR-006) with `/app/settings` and the `/admin/*` section
+ * (`AdminLayout`, `SUPER_ADMIN`-gated), and in Milestone 9 (docs/BILLING_
+ * ARCHITECTURE.md) with `/app/billing` (`tenantActiveGuard`'s redirect
+ * target, superseding the interim `/app/tenant-suspended` page) and
+ * `/admin/plans` + `/admin/tenants/:id/billing`.
  */
 export const routes: Routes = [
   {
@@ -195,14 +195,19 @@ export const routes: Routes = [
           ),
       },
       {
-        // TenantActiveGuard's own redirect target (Section 3.3's exemption
-        // pattern) — deliberately not itself gated by tenantActiveGuard, or
-        // a suspended tenant could never reach the page explaining why.
-        path: 'tenant-suspended',
+        // Milestone 9 (docs/BILLING_ARCHITECTURE.md): `tenantActiveGuard`'s
+        // own redirect target (FRONTEND_ARCHITECTURE.md Section 3.3's
+        // exemption pattern) — deliberately not itself gated by
+        // `tenantActiveGuard`, or a `SUSPENDED`/`CANCELLED` tenant could
+        // never reach the one screen that resolves the block. Readable by
+        // `MANAGER`+ (mutations are further gated in-page by
+        // `PermissionService.can('billing:manage')`, OWNER-only, mirroring
+        // the salon/employees/services read-vs-write split).
+        path: 'billing',
+        canActivate: [roleGuard],
+        data: { roles: ['MANAGER'] },
         loadComponent: () =>
-          import('./features/dashboard-home/pages/tenant-suspended-page/tenant-suspended-page').then(
-            (m) => m.TenantSuspendedPage,
-          ),
+          import('./features/billing/pages/billing-page/billing-page').then((m) => m.BillingPage),
       },
     ],
   },
@@ -217,6 +222,22 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./features/admin/pages/admin-tenants-page/admin-tenants-page').then(
             (m) => m.AdminTenantsPage,
+          ),
+      },
+      {
+        // Milestone 9: Platform Admin subscription lookup + tenant billing
+        // status, linked from the "Billing" action on each tenant row.
+        path: 'tenants/:id/billing',
+        loadComponent: () =>
+          import('./features/admin/pages/admin-tenant-billing-page/admin-tenant-billing-page').then(
+            (m) => m.AdminTenantBillingPage,
+          ),
+      },
+      {
+        path: 'plans',
+        loadComponent: () =>
+          import('./features/admin/pages/admin-plans-page/admin-plans-page').then(
+            (m) => m.AdminPlansPage,
           ),
       },
       { path: '', redirectTo: 'tenants', pathMatch: 'full' },

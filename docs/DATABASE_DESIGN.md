@@ -888,6 +888,8 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 
 ### 3.8 Billing
 
+> **Built Milestone 9 (docs/adr/ADR-012-billing-and-subscriptions.md)** — as-built, with these deviations from Sections 3.8.1-3.8.5 below: `subscriptions.stripe_customer_id` is **nullable**, not required — see 3.8.2's own "Amended" note for the reason (a hard schema/reliability decision, not a naming tweak). `invoices.invoice_pdf_file_id` was **not built**; a plain `invoice_pdf_url` VARCHAR nullable column is used instead — no `File`/S3 storage model exists in this codebase for Stripe-hosted PDFs to be mirrored into, so the column stores Stripe's own hosted-invoice URL directly. `payments.failure_code`/`failure_message` are populated from Stripe `payment_intent.payment_failed` events exactly as designed; the `Notifications`-driven dunning flow they were meant to trigger (3.8.4's "Business Rules") was **not built** this milestone — see docs/adr/ADR-012's grace-period consequences note. All five tables' primary keys use standard `gen_random_uuid()`, not app-generated UUIDv7 — the same "not worth a new dependency at this milestone's volume" call already made for `AuditLog`/`AppointmentStatusHistory`/`whatsapp_webhook_events` (3.6.6, 3.7.2). Full as-built reference: docs/BILLING_ARCHITECTURE.md, docs/STRIPE_INTEGRATION.md, docs/FEATURE_ENTITLEMENTS.md.
+
 #### 3.8.1 `plans` *(Global)*
 **Purpose:** Platform-defined subscription tier definitions (e.g., Starter/Pro/Enterprise) — not tenant-owned; shared reference data.
 **Columns:**
@@ -937,6 +939,8 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 **Business Rules:** `status` is authoritatively driven by Stripe webhooks, not direct application writes (Stripe is the source of truth; this table is a queryable mirror) — see Section 9.4 lifecycle. `messages_used_current_period` resets to `0` on each new billing period, updated by the same job that processes usage.
 **Expected Row Growth:** Exactly one row per tenant.
 **Frequently Queried Columns:** `tenant_id`, `status`, `stripe_customer_id` (webhook resolution).
+
+**Amended, Milestone 9 (docs/adr/ADR-012-billing-and-subscriptions.md):** `stripe_customer_id` is built **nullable** (`null` until first Checkout), not required as designed above. A row is created at tenant registration (`TRIALING`, cheapest active plan) in the same transaction as the tenant/owner — before any Stripe interaction has happened — and `EntitlementService.getOrCreateForTenant` (the gate nearly every tenant-scoped write path across Employees/Appointments/WhatsApp calls) reads this table on every invocation. Requiring `stripe_customer_id` would force a live Stripe API call onto that hot, ubiquitous read path, and would block the many pre-existing integration test fixtures (`seedOwner()`) that bypass registration entirely. The Stripe Customer is created exactly once, lazily, inside `POST /subscriptions` (Checkout initiation) — see docs/STRIPE_INTEGRATION.md §3. Built via a second migration (`subscription_stripe_customer_id_nullable`) after the initial `add_billing_models` migration shipped it as required.
 
 ---
 
@@ -1079,6 +1083,8 @@ Entities grouped by domain, matching SYSTEM_ARCHITECTURE.md's module boundaries 
 **Business Rules:** Signature verification (Stripe webhook secret) occurs before this row is trusted for processing, though the raw payload may be logged pre-verification for debugging failed-verification attempts (application-layer decision).
 **Expected Row Growth:** Moderate — one row per Stripe event per tenant per billing-relevant action.
 **Frequently Queried Columns:** `(provider, provider_event_id)`, `processing_status`.
+
+**Amended, Milestone 9 (docs/adr/ADR-012-billing-and-subscriptions.md):** built as `webhook_logs` (Prisma model `WebhookLog` — `PRISMA_SCHEMA.md`'s reserved name), matching this design otherwise field-for-field, including the pre-verification-logging business rule (a signature-verification failure persists a row with a synthetic `invalid-${uuid}` `provider_event_id`, since the real Stripe event id isn't trustworthy to extract from an unverified payload — docs/STRIPE_INTEGRATION.md §5.1). `id` uses standard `gen_random_uuid()`, not app-generated UUIDv7 as designed above — same deferred-dependency call as `whatsapp_webhook_events`.
 
 ---
 

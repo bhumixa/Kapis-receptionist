@@ -272,6 +272,21 @@ export class PrismaAppointmentRepository implements AppointmentRepositoryPort {
       },
     });
   }
+
+  async countForTenantInRange(
+    tenantId: string,
+    startGte: Date,
+    startLt: Date,
+  ): Promise<number> {
+    return this.prisma.appointment.count({
+      where: {
+        tenantId,
+        deletedAt: null,
+        status: { not: AppointmentStatus.CANCELLED },
+        startTime: { gte: startGte, lt: startLt },
+      },
+    });
+  }
 }
 
 function lineCreateData(

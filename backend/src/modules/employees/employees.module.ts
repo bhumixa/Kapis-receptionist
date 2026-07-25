@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { CoreModule } from '../../core/core.module';
 import { AuthModule } from '../auth/auth.module';
+import { BillingModule } from '../billing/billing.module';
 import { ServicesModule } from '../services/services.module';
 import { EMPLOYEE_REPOSITORY } from './domain/ports/employee-repository.port';
 import { EMPLOYEE_SERVICE_REPOSITORY } from './domain/ports/employee-service-repository.port';
@@ -25,10 +26,14 @@ import { EmployeesController } from './interface/employees.controller';
  * Imports `ServicesModule` (one-directional: Employees → Services, ADR-008
  * decision #3) to validate `serviceIds` and read service data for
  * assignment — `ServicesModule` never imports this module back, keeping
- * the dependency graph a DAG.
+ * the dependency graph a DAG. Milestone 9 adds `BillingModule` (for
+ * `EntitlementService.assertWithinLimit(EMPLOYEE_LIMIT, ...)` in
+ * `EmployeeService.createEmployee`) — one-directional, since
+ * `EntitlementService` never reaches back into this module (docs/
+ * FEATURE_ENTITLEMENTS.md).
  */
 @Module({
-  imports: [CoreModule, AuthModule, ServicesModule],
+  imports: [CoreModule, AuthModule, BillingModule, ServicesModule],
   controllers: [
     EmployeesController,
     EmployeeWorkingHoursController,

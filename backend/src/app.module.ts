@@ -21,6 +21,7 @@ import { AppointmentsModule } from './modules/appointments/appointments.module';
 import { BullmqRootModule } from './queues/bullmq-root.module';
 import { WhatsAppModule } from './modules/whatsapp/whatsapp.module';
 import { AiModule } from './modules/ai/ai.module';
+import { BillingModule } from './modules/billing/billing.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { AiModule } from './modules/ai/ai.module';
     BullmqRootModule,
     WhatsAppModule,
     AiModule,
+    BillingModule,
   ],
   controllers: [],
   providers: [

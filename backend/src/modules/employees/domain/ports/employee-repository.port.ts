@@ -62,4 +62,6 @@ export interface EmployeeRepositoryPort {
   ): Promise<EmployeeEntity>;
   /** Soft delete (`deletedAt`) — historical references (future `Appointment`) must survive. */
   softDelete(tenantId: string, id: string): Promise<void>;
+  /** Milestone 9 (docs/FEATURE_ENTITLEMENTS.md) — active headcount, for `EntitlementService.assertWithinLimit(EMPLOYEE_LIMIT, ...)`. */
+  countActiveForTenant(tenantId: string): Promise<number>;
 }

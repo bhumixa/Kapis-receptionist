@@ -195,6 +195,42 @@ class EnvironmentVariables {
   @IsInt()
   @IsOptional()
   AI_RATE_LIMIT_PER_MINUTE: number = 30;
+
+  // --- Billing / Stripe (Milestone 9, docs/STRIPE_INTEGRATION.md) ---
+  // STRIPE_SECRET_KEY authenticates server-to-server Stripe API calls
+  // (Checkout Session/Customer Portal/subscription creation);
+  // STRIPE_WEBHOOK_SECRET verifies the `Stripe-Signature` header via the
+  // Stripe SDK's own `constructEvent` (no hand-rolled HMAC, unlike
+  // WhatsApp's signature util, since Stripe ships this natively).
+  // STRIPE_PUBLISHABLE_KEY is not currently used server-side (Checkout is
+  // fully redirect-based, no Stripe.js Elements embedded yet) but is
+  // validated here anyway so it fails fast at boot alongside its siblings
+  // rather than as a surprise when a future client-side flow needs it.
+  @IsString()
+  @MinLength(8)
+  STRIPE_SECRET_KEY: string;
+
+  @IsString()
+  @MinLength(8)
+  STRIPE_WEBHOOK_SECRET: string;
+
+  @IsString()
+  @IsOptional()
+  STRIPE_PUBLISHABLE_KEY?: string;
+
+  @IsUrl({ require_tld: false })
+  @IsOptional()
+  BILLING_CHECKOUT_SUCCESS_URL: string =
+    'http://localhost:4200/app/billing?checkout=success';
+
+  @IsUrl({ require_tld: false })
+  @IsOptional()
+  BILLING_CHECKOUT_CANCEL_URL: string =
+    'http://localhost:4200/app/billing?checkout=cancelled';
+
+  @IsUrl({ require_tld: false })
+  @IsOptional()
+  BILLING_PORTAL_RETURN_URL: string = 'http://localhost:4200/app/billing';
 }
 
 /**

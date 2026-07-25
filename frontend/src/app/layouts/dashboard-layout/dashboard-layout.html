@@ -9,6 +9,19 @@
       </button>
     </div>
   }
+  @if (billingBanner(); as banner) {
+    <div
+      class="px-6 py-2 text-sm flex items-center justify-between"
+      [class]="
+        banner.tone === 'warning'
+          ? 'bg-red-600 text-white'
+          : 'bg-blue-600 text-white'
+      "
+    >
+      <span>{{ banner.message }}</span>
+      <a routerLink="/app/billing" class="font-medium underline">Resolve billing</a>
+    </div>
+  }
   <header class="border-b border-gray-200 bg-white px-6 py-4 flex items-center justify-between">
     <div class="flex items-center gap-6">
       <span class="text-lg font-semibold text-gray-900">Kapis Receptionist</span>
@@ -52,6 +65,14 @@
         >
           Conversations
         </a>
+        @if (canViewBilling()) {
+          <a
+            routerLink="/app/billing"
+            class="text-sm font-medium text-gray-600 hover:text-gray-900"
+          >
+            Billing
+          </a>
+        }
         @if (canViewSettings()) {
           <a
             routerLink="/app/settings"

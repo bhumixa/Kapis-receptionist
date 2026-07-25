@@ -19,15 +19,24 @@ const MAX_SLUG_ATTEMPTS = 5;
 
 /**
  * Implements the one atomic, multi-table write this module owns: Tenant +
- * User + UserRole(OWNER) + TenantSettings in a single Postgres transaction
- * (SYSTEM_ARCHITECTURE.md Section 2.2's "Modular Monolith gives ACID
- * transactions" rationale, applied here). As of Milestone 3
- * (docs/adr/ADR-006), `TenantSettings` is created here with its default,
- * empty namespace values — but deliberately **not** `Subscription`, since
- * that table still doesn't exist (Milestone 8/Billing, explicitly out of
- * this milestone's scope; `Tenant.status`/`trialEndsAt` continue to work
- * exactly as before). Does **not** send a verification email — that's
- * orchestrated by `AuthService.register` after this transaction commits.
+ * User + UserRole(OWNER) + TenantSettings + Subscription in a single
+ * Postgres transaction (SYSTEM_ARCHITECTURE.md Section 2.2's "Modular
+ * Monolith gives ACID transactions" rationale, applied here). Does **not**
+ * send a verification email — that's orchestrated by `AuthService.register`
+ * after this transaction commits.
+ *
+ * Milestone 9 (docs/BILLING_ARCHITECTURE.md): also creates a `TRIALING`
+ * `Subscription` against the cheapest active `Plan`, in the same
+ * transaction. This is a plain Prisma write directly against `tx.subscription`
+ * — not a call into `modules/billing`'s `SubscriptionsService` — deliberately,
+ * to avoid making `AuthModule` depend on `BillingModule` (which would create
+ * a circular module dependency, since `BillingModule` itself needs
+ * `AuthModule`/`CoreModule` like every other module). It also needs no
+ * Stripe call: `Subscription.stripeCustomerId` is nullable by design (see
+ * that model's own schema doc comment) — a real Stripe Customer is created
+ * lazily, on first Checkout. `Tenant.trialEndsAt` (already existed since
+ * Milestone 2) is set to match, so `GET /tenant` continues to reflect trial
+ * status without a join.
  */
 @Injectable()
 export class PrismaRegistrationRepository implements RegistrationRepositoryPort {
@@ -96,7 +105,38 @@ export class PrismaRegistrationRepository implements RegistrationRepositoryPort 
 
       await tx.tenantSettings.create({ data: { tenantId: tenant.id } });
 
-      return { user, tenant };
+      const defaultPlan = await tx.plan.findFirst({
+        where: { isActive: true },
+        orderBy: { monthlyPriceCents: 'asc' },
+      });
+      if (!defaultPlan) {
+        // A platform configuration gap (no active Plan seeded), not a
+        // per-signup problem — same "fail loudly on an ops mistake, don't
+        // silently skip billing setup" stance as the OWNER-role check above.
+        throw new InternalServerErrorException(
+          'No active Plan is configured; cannot complete registration.',
+        );
+      }
+
+      const now = new Date();
+      const trialEndsAt = new Date(
+        now.getTime() + defaultPlan.trialDays * 24 * 60 * 60 * 1000,
+      );
+      await tx.subscription.create({
+        data: {
+          tenantId: tenant.id,
+          planId: defaultPlan.id,
+          status: 'TRIALING',
+          currentPeriodStart: now,
+          currentPeriodEnd: trialEndsAt,
+        },
+      });
+      const tenantWithTrial = await tx.tenant.update({
+        where: { id: tenant.id },
+        data: { trialEndsAt },
+      });
+
+      return { user, tenant: tenantWithTrial };
     });
 
     return { user: toAuthUser(user), tenant: toAuthTenant(tenant) };

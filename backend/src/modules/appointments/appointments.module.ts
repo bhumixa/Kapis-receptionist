@@ -4,6 +4,7 @@ import { AuthModule } from '../auth/auth.module';
 import { BookingLockModule } from '../../core/locking/booking-lock.module';
 import { IdempotencyModule } from '../../core/idempotency/idempotency.module';
 import { AvailabilityModule } from '../availability/availability.module';
+import { BillingModule } from '../billing/billing.module';
 import { CustomersModule } from '../customers/customers.module';
 import { EmployeesModule } from '../employees/employees.module';
 import { ServicesModule } from '../services/services.module';
@@ -21,7 +22,11 @@ import { AppointmentsController } from './interface/appointments.controller';
  * SYSTEM_ARCHITECTURE.md's original module graph) plus every domain module
  * whose data a booking references: `CustomersModule`, `EmployeesModule`,
  * `ServicesModule`, `TenantsModule` (for `TenantSettingsService`'s
- * cancellation-notice policy).
+ * cancellation-notice policy). Milestone 9 adds `BillingModule` (for
+ * `EntitlementService.assertWithinLimit(APPOINTMENT_LIMIT, ...)` in
+ * `AppointmentsService.createAppointment`/`createAppointmentForAi`) —
+ * one-directional, same reasoning as `EmployeesModule`'s own Milestone 9
+ * addition (docs/FEATURE_ENTITLEMENTS.md).
  */
 @Module({
   imports: [
@@ -30,6 +35,7 @@ import { AppointmentsController } from './interface/appointments.controller';
     BookingLockModule,
     IdempotencyModule,
     AvailabilityModule,
+    BillingModule,
     CustomersModule,
     EmployeesModule,
     ServicesModule,

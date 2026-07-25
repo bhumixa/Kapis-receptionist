@@ -7,6 +7,8 @@ import {
   WebhookProcessingStatus,
 } from '@prisma/client';
 import { RedisService } from '../../../database/redis.service';
+import { EntitlementService } from '../../billing/application/entitlement.service';
+import { PlanLimitExceededException } from '../../billing/application/exceptions/billing.exceptions';
 import { CustomerService } from '../../customers/application/customer.service';
 // Genuine, intentional circular module dependency (ai.module.ts's doc
 // comment) — resolved with forwardRef on both sides (see the constructor
@@ -207,6 +209,7 @@ export class InboundMessageProcessorService {
     private readonly conversationsService: ConversationsService,
     private readonly customerService: CustomerService,
     private readonly redis: RedisService,
+    private readonly entitlements: EntitlementService,
     @Inject(forwardRef(() => ConversationOrchestratorService))
     private readonly orchestrator: ConversationOrchestratorService,
   ) {}
@@ -372,6 +375,18 @@ export class InboundMessageProcessorService {
    * already handles the expected failure mode (LLM provider unavailable)
    * gracefully with a fallback + auto-escalation; this catch is the
    * defensive backstop for anything else.
+   *
+   * Milestone 9 (docs/FEATURE_ENTITLEMENTS.md): before invoking the
+   * orchestrator, checks and increments the tenant's monthly AI/WhatsApp
+   * message quota (`EntitlementService.checkAndIncrementAiMessageUsage`,
+   * `Subscription.messagesUsedCurrentPeriod` vs `Plan.maxMessagesPerMonth`)
+   * — the single counter covers both "AI conversation quota" and "WhatsApp
+   * conversation quota" from the milestone brief (see that method's own doc
+   * comment). A `PlanLimitExceededException` here is a real, expected gate
+   * (the tenant is over their plan for this period), not a transient
+   * failure — the inbound `Message` row is still correctly persisted
+   * either way; only the automated reply is skipped, leaving the
+   * conversation visible in the dashboard for staff to pick up manually.
    */
   private async triggerAiResponse(
     tenantId: string,
@@ -382,6 +397,7 @@ export class InboundMessageProcessorService {
       return;
     }
     try {
+      await this.entitlements.checkAndIncrementAiMessageUsage(tenantId);
       await this.orchestrator.runTurn({
         tenantId,
         conversationId: conversation.id,
@@ -389,6 +405,12 @@ export class InboundMessageProcessorService {
         persist: true,
       });
     } catch (error) {
+      if (error instanceof PlanLimitExceededException) {
+        this.logger.warn(
+          `Tenant ${tenantId} exceeded its monthly AI/WhatsApp message quota — skipping automated reply for conversation ${conversation.id}`,
+        );
+        return;
+      }
       this.logger.error(
         `AI orchestration failed for conversation ${conversation.id}: ${
           error instanceof Error ? error.message : String(error)

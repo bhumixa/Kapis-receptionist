@@ -50,7 +50,7 @@ export interface TenantRepositoryPort {
   updateStatus(
     id: string,
     status: TenantStatus,
-    extra?: { suspendedAt?: Date | null },
+    extra?: { suspendedAt?: Date | null; trialEndsAt?: Date | null },
   ): Promise<TenantEntity>;
   findManyForAdmin(
     filter: AdminTenantListFilter,

@@ -6,6 +6,7 @@ import {
 } from '@prisma/client';
 import { AuditLogService } from '../../../src/core/audit/audit-log.service';
 import { TenantResourceNotFoundException } from '../../../src/core/guards/rbac.exceptions';
+import { EntitlementService } from '../../../src/modules/billing/application/entitlement.service';
 import {
   BookingLockAcquisitionError,
   BookingLockService,
@@ -148,6 +149,7 @@ describe('AppointmentsService', () => {
   let services: jest.Mocked<Pick<ServiceService, 'findByIdsForTenant'>>;
   let tenantSettings: jest.Mocked<Pick<TenantSettingsService, 'getSettings'>>;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
+  let entitlements: jest.Mocked<Pick<EntitlementService, 'assertWithinLimit'>>;
   let appointmentsService: AppointmentsService;
 
   beforeEach(() => {
@@ -159,6 +161,7 @@ describe('AppointmentsService', () => {
       cancel: jest.fn(),
       reschedule: jest.fn(),
       softDelete: jest.fn(),
+      countForTenantInRange: jest.fn().mockResolvedValue(0),
     };
     availability = {
       isWindowAvailable: jest.fn().mockResolvedValue(true),
@@ -191,6 +194,9 @@ describe('AppointmentsService', () => {
       }),
     };
     auditLog = { record: jest.fn() };
+    entitlements = {
+      assertWithinLimit: jest.fn().mockResolvedValue(undefined),
+    };
 
     appointmentsService = new AppointmentsService(
       repo,
@@ -202,6 +208,7 @@ describe('AppointmentsService', () => {
       services as unknown as ServiceService,
       tenantSettings as unknown as TenantSettingsService,
       auditLog as unknown as AuditLogService,
+      entitlements as unknown as EntitlementService,
     );
   });
 

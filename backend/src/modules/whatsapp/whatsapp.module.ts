@@ -3,6 +3,7 @@ import { CoreModule } from '../../core/core.module';
 import { AuthModule } from '../auth/auth.module';
 import { IdempotencyModule } from '../../core/idempotency/idempotency.module';
 import { AiModule } from '../ai/ai.module';
+import { BillingModule } from '../billing/billing.module';
 import { CustomersModule } from '../customers/customers.module';
 import { WhatsAppQueueModule } from './queues/whatsapp-queue.module';
 import { WhatsAppInboundProcessor } from './queues/whatsapp-inbound.processor';
@@ -36,13 +37,18 @@ import { WebhooksController } from './interface/webhooks.controller';
  * (Conversations/Messages/WhatsApp) — internally layered per aggregate.
  * `WhatsAppInboundProcessor`/`WhatsAppOutboundProcessor` (BullMQ workers)
  * are providers here, not in `WhatsAppQueueModule`, since they depend on
- * this module's own application-layer services.
+ * this module's own application-layer services. Milestone 9 adds
+ * `BillingModule` (for `EntitlementService.checkAndIncrementAiMessageUsage`
+ * in `InboundMessageProcessorService`) — one-directional, same reasoning as
+ * `EmployeesModule`/`AppointmentsModule`'s own Milestone 9 addition
+ * (docs/FEATURE_ENTITLEMENTS.md).
  */
 @Module({
   imports: [
     CoreModule,
     AuthModule,
     IdempotencyModule,
+    BillingModule,
     CustomersModule,
     WhatsAppQueueModule,
     forwardRef(() => AiModule),

@@ -95,4 +95,18 @@ export interface AppointmentRepositoryPort {
   }>;
   /** Soft delete + flips every line's `isBlocking` to `false` — one transaction. */
   softDelete(tenantId: string, id: string): Promise<void>;
+  /**
+   * Milestone 9 (docs/FEATURE_ENTITLEMENTS.md) — count of non-cancelled
+   * appointments starting in `[startGte, startLt)`, for
+   * `EntitlementService.assertWithinLimit(APPOINTMENT_LIMIT, ...)`. Uses a
+   * rolling calendar month, not the tenant's exact Stripe billing period —
+   * a deliberate simplification that keeps `Appointments` from needing any
+   * dependency on `Subscription`'s period fields (see `EntitlementService`'s
+   * own doc comment on why it never reaches into another module's data).
+   */
+  countForTenantInRange(
+    tenantId: string,
+    startGte: Date,
+    startLt: Date,
+  ): Promise<number>;
 }

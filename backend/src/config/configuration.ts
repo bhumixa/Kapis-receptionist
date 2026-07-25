@@ -137,3 +137,24 @@ export const aiConfig = registerAs('ai', () => ({
     10,
   ),
 }));
+
+/**
+ * Billing / Stripe (Milestone 9, docs/STRIPE_INTEGRATION.md). `webhookSecret`
+ * backs `stripe.webhooks.constructEvent` (WebhookIngestionService) — no
+ * hand-rolled HMAC, unlike WhatsApp's signature util, since the Stripe SDK
+ * verifies its own signature scheme natively.
+ */
+export const billingConfig = registerAs('billing', () => ({
+  stripeSecretKey: process.env.STRIPE_SECRET_KEY,
+  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+  stripePublishableKey: process.env.STRIPE_PUBLISHABLE_KEY || null,
+  checkoutSuccessUrl:
+    process.env.BILLING_CHECKOUT_SUCCESS_URL ??
+    'http://localhost:4200/app/billing?checkout=success',
+  checkoutCancelUrl:
+    process.env.BILLING_CHECKOUT_CANCEL_URL ??
+    'http://localhost:4200/app/billing?checkout=cancelled',
+  portalReturnUrl:
+    process.env.BILLING_PORTAL_RETURN_URL ??
+    'http://localhost:4200/app/billing',
+}));

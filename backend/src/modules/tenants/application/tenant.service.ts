@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ActorType, Prisma } from '@prisma/client';
 import { AuditLogService } from '../../../core/audit/audit-log.service';
+import { TenantResourceNotFoundException } from '../../../core/guards/rbac.exceptions';
 import { AccessTokenPayload } from '../../auth/application/token.service';
 import { TenantEntity } from '../domain/entities/tenant.entity';
 import {
@@ -26,6 +27,24 @@ export class TenantService {
 
   async getProfile(tenantId: string): Promise<TenantEntity> {
     return this.tenants.findById(tenantId).then(requireFound);
+  }
+
+  /**
+   * Milestone 9 (docs/BILLING_ARCHITECTURE.md) — `modules/admin`'s
+   * `AdminBillingController` needs to validate a Super-Admin-supplied,
+   * genuinely arbitrary tenant id (never pre-resolved by
+   * `TenantContextService`, unlike every other caller of `getProfile`
+   * above). A miss here is an expected, ordinary case (a stale/typo'd id),
+   * not the "exceptionally narrow race" `getProfile`'s `requireFound`
+   * assumes — so this throws the standard `404 TenantResourceNotFoundException`
+   * instead of `getProfile`'s internal-invariant `Error`.
+   */
+  async getProfileForAdmin(tenantId: string): Promise<TenantEntity> {
+    const tenant = await this.tenants.findById(tenantId);
+    if (!tenant) {
+      throw new TenantResourceNotFoundException();
+    }
+    return tenant;
   }
 
   /**

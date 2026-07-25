@@ -310,6 +310,8 @@ Plus two cross-cutting, non-domain infrastructure modules: **Core** (tenant cont
 **Dependencies:** Tenants (subscription belongs to a tenant), Notifications (payment failure alerts).
 **Public APIs:** `BillingService` — createCheckoutSession, getSubscriptionStatus, changePlan, cancelSubscription, getInvoiceHistory; `StripeWebhookController` (inbound HTTP boundary).
 
+> **Built Milestone 9 (docs/adr/ADR-012-billing-and-subscriptions.md)** — as-built, matching this section's design closely, with these deviations: usage-limit enforcement is a single exported `EntitlementService.assertWithinLimit(tenantId, feature, currentUsage)` gate rather than the module "exposing current plan limits" for callers to check themselves — `Employees`/`Appointments`/`WhatsApp` each compute their own usage and call this gate, keeping the module dependency graph one-directional (no `forwardRef` needed, unlike AI↔WhatsApp). `Notifications` is not yet wired for payment-failure alerts — no dunning-email flow exists yet (deferred; the grace-period policy for `PAST_DUE` makes this lower-urgency than originally scoped). `Subscription.stripeCustomerId` is nullable and populated lazily at first Checkout, not eagerly at tenant creation — see docs/adr/ADR-012's central schema decision. Full as-built reference: docs/BILLING_ARCHITECTURE.md, docs/STRIPE_INTEGRATION.md, docs/FEATURE_ENTITLEMENTS.md.
+
 ---
 
 #### **Notifications**
@@ -365,15 +367,15 @@ Core ← (everything)
 
 Auth → Users, Tenants, Notifications
 Users → Tenants
-Employees → Tenants, Services, Users
+Employees → Tenants, Services, Users, Billing
 Customers → Tenants, Conversations, Appointments
 Services → Tenants, Employees
-Appointments → Tenants, Employees, Services, Customers, Availability, AuditLogs, Notifications
+Appointments → Tenants, Employees, Services, Customers, Availability, AuditLogs, Notifications, Billing
 Availability → Employees, Appointments, Services
 Conversations → Tenants, Customers, Messages, AI
 Messages → Conversations, Files
 AI → Conversations, Messages, Appointments, Availability, Services, Employees, Customers, Settings
-WhatsApp → Conversations, Messages, AI, Tenants, Files
+WhatsApp → Conversations, Messages, AI, Tenants, Files, Billing
 Billing → Tenants, Notifications
 Notifications → (external provider only)
 Dashboard → Appointments, Conversations, Customers, Billing

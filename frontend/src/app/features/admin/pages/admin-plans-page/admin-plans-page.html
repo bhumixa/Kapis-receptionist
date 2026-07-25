@@ -1,0 +1,166 @@
+<div class="max-w-6xl">
+  <div class="mb-6">
+    <h1 class="text-lg font-semibold text-white">Plans</h1>
+    <p class="text-sm text-slate-400 mt-1">
+      Manage plan pricing and limits. Retired plans are deactivated, never deleted.
+    </p>
+  </div>
+
+  @if (isLoading()) {
+    <p class="text-sm text-slate-400">Loading...</p>
+  } @else {
+    <div class="overflow-x-auto rounded-lg border border-slate-800">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-900">
+          <tr class="text-left text-slate-400">
+            <th class="px-4 py-3 font-medium">Name</th>
+            <th class="px-4 py-3 font-medium">Price / mo</th>
+            <th class="px-4 py-3 font-medium">Staff</th>
+            <th class="px-4 py-3 font-medium">Messages</th>
+            <th class="px-4 py-3 font-medium">Appointments</th>
+            <th class="px-4 py-3 font-medium">Locations</th>
+            <th class="px-4 py-3 font-medium">Storage (MB)</th>
+            <th class="px-4 py-3 font-medium">Trial days</th>
+            <th class="px-4 py-3 font-medium">Active</th>
+            <th class="px-4 py-3 font-medium"></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (plan of plans(); track plan.id) {
+            @if (editingPlanId() === plan.id && draft(); as d) {
+              <tr class="border-t border-slate-800 bg-slate-900/50">
+                <td class="px-4 py-2">
+                  <input
+                    type="text"
+                    [ngModel]="d.name"
+                    (ngModelChange)="updateDraft('name', $event)"
+                    class="w-32 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-white"
+                  />
+                </td>
+                <td class="px-4 py-2">
+                  <input
+                    type="number"
+                    step="0.01"
+                    [ngModel]="d.monthlyPriceDollars"
+                    (ngModelChange)="updateDraft('monthlyPriceDollars', $event)"
+                    class="w-20 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-white"
+                  />
+                </td>
+                <td class="px-4 py-2">
+                  <input
+                    type="number"
+                    [ngModel]="d.maxStaff"
+                    (ngModelChange)="updateDraft('maxStaff', $event)"
+                    placeholder="∞"
+                    class="w-16 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-white"
+                  />
+                </td>
+                <td class="px-4 py-2">
+                  <input
+                    type="number"
+                    [ngModel]="d.maxMessagesPerMonth"
+                    (ngModelChange)="updateDraft('maxMessagesPerMonth', $event)"
+                    placeholder="∞"
+                    class="w-20 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-white"
+                  />
+                </td>
+                <td class="px-4 py-2">
+                  <input
+                    type="number"
+                    [ngModel]="d.maxAppointmentsPerMonth"
+                    (ngModelChange)="updateDraft('maxAppointmentsPerMonth', $event)"
+                    placeholder="∞"
+                    class="w-20 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-white"
+                  />
+                </td>
+                <td class="px-4 py-2">
+                  <input
+                    type="number"
+                    [ngModel]="d.maxLocations"
+                    (ngModelChange)="updateDraft('maxLocations', $event)"
+                    class="w-16 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-white"
+                  />
+                </td>
+                <td class="px-4 py-2">
+                  <input
+                    type="number"
+                    [ngModel]="d.maxStorageMb"
+                    (ngModelChange)="updateDraft('maxStorageMb', $event)"
+                    placeholder="∞"
+                    class="w-20 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-white"
+                  />
+                </td>
+                <td class="px-4 py-2">
+                  <input
+                    type="number"
+                    [ngModel]="d.trialDays"
+                    (ngModelChange)="updateDraft('trialDays', $event)"
+                    class="w-16 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-white"
+                  />
+                </td>
+                <td class="px-4 py-2">
+                  <input
+                    type="checkbox"
+                    [ngModel]="d.isActive"
+                    (ngModelChange)="updateDraft('isActive', $event)"
+                  />
+                </td>
+                <td class="px-4 py-2 whitespace-nowrap">
+                  <button
+                    type="button"
+                    (click)="save(plan)"
+                    [disabled]="isSaving()"
+                    class="rounded bg-white px-2.5 py-1 text-xs font-medium text-slate-900 hover:bg-slate-200 disabled:opacity-50"
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    (click)="cancelEdit()"
+                    class="ml-1 rounded border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-slate-800"
+                  >
+                    Cancel
+                  </button>
+                </td>
+              </tr>
+            } @else {
+              <tr class="border-t border-slate-800">
+                <td class="px-4 py-3 text-white">{{ plan.name }}</td>
+                <td class="px-4 py-3 text-slate-300">${{ (plan.monthlyPriceCents / 100).toFixed(2) }}</td>
+                <td class="px-4 py-3 text-slate-300">{{ plan.maxStaff ?? '∞' }}</td>
+                <td class="px-4 py-3 text-slate-300">{{ plan.maxMessagesPerMonth ?? '∞' }}</td>
+                <td class="px-4 py-3 text-slate-300">{{ plan.maxAppointmentsPerMonth ?? '∞' }}</td>
+                <td class="px-4 py-3 text-slate-300">{{ plan.maxLocations }}</td>
+                <td class="px-4 py-3 text-slate-300">{{ plan.maxStorageMb ?? '∞' }}</td>
+                <td class="px-4 py-3 text-slate-300">{{ plan.trialDays }}</td>
+                <td class="px-4 py-3">
+                  <button
+                    type="button"
+                    (click)="toggleActive(plan)"
+                    class="rounded-full px-2.5 py-0.5 text-xs font-medium"
+                    [class]="
+                      plan.isActive
+                        ? 'bg-green-500/20 text-green-400'
+                        : 'bg-slate-700 text-slate-400'
+                    "
+                  >
+                    {{ plan.isActive ? 'Active' : 'Inactive' }}
+                  </button>
+                </td>
+                <td class="px-4 py-3">
+                  <button
+                    type="button"
+                    (click)="startEdit(plan)"
+                    class="text-xs font-medium text-slate-300 hover:text-white"
+                  >
+                    Edit
+                  </button>
+                </td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

@@ -93,6 +93,52 @@ export class TenantLifecycleService {
     return updated;
   }
 
+  /**
+   * Milestone 9 (docs/BILLING_ARCHITECTURE.md) — called by
+   * `StripeEventProcessorService` to keep `Tenant.status` in sync with
+   * `Subscription.status` as Stripe webhooks arrive. Deliberately does
+   * **not** reuse `suspend`/`reactivate`'s human-actor transition rules
+   * (idempotent-no-op guard, `InvalidTenantLifecycleTransitionException`)
+   * — a billing sync always mirrors Stripe's current truth and must apply
+   * unconditionally, including transitions those methods don't allow
+   * (`PAST_DUE`, `CANCELLED`) and out-of-order webhook delivery safely
+   * converging to the same end state. Grace-period policy (PROJECT_
+   * REQUIREMENTS.md Section 22 Q9, resolved this milestone): `PAST_DUE`
+   * stays fully functional (only `SUSPENDED`/`CANCELLED` block mutating
+   * routes via `TenantActiveGuard`) until Stripe's own dunning retries are
+   * exhausted (`Subscription.status` becomes `UNPAID`, mapped to
+   * `SUSPENDED` here) or the subscription is canceled outright.
+   */
+  async syncStatusFromBilling(
+    tenantId: string,
+    status: TenantStatus,
+    extra: { suspendedAt?: Date | null; trialEndsAt?: Date | null } = {},
+    metadata?: Record<string, unknown>,
+  ): Promise<TenantEntity> {
+    const tenant = await this.requireTenant(tenantId);
+    if (tenant.status === status && Object.keys(extra).length === 0) {
+      return tenant;
+    }
+
+    const updated = await this.tenants.updateStatus(tenantId, status, extra);
+
+    await this.auditLog.record({
+      action: 'TENANT_STATUS_SYNCED_FROM_BILLING',
+      entityType: 'Tenant',
+      entityId: tenantId,
+      actorType: ActorType.SYSTEM,
+      actorId: null,
+      tenantId,
+      metadata: {
+        previousStatus: tenant.status,
+        newStatus: status,
+        ...metadata,
+      },
+    });
+
+    return updated;
+  }
+
   private async requireTenant(tenantId: string): Promise<TenantEntity> {
     const tenant = await this.tenants.findById(tenantId);
     if (!tenant) {

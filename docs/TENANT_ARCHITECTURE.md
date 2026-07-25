@@ -162,10 +162,10 @@ See API_SPECIFICATION.md's amendment (Sections 6, 16, and the new "Impersonation
 ## 7. Deferred / Known Gaps (Not Forgotten)
 
 - `TenantFeature` (per-tenant feature flags) — no requested consumer; not built.
-- `Subscription`-integrated lifecycle — `suspend`/`reactivate` are Super-Admin-manual only; no automatic status sync from a subscription (Billing is Milestone 8).
+- ~~`Subscription`-integrated lifecycle~~ — **closed, Milestone 9 (docs/adr/ADR-012-billing-and-subscriptions.md).** `TenantLifecycleService.syncStatusFromBilling` now automatically syncs `Tenant.status` from Stripe-driven `Subscription.status` changes (`TRIAL`/`ACTIVE`/`PAST_DUE`/`CANCELLED`/`SUSPENDED`), independent of and additive to the still-available Super-Admin-manual `suspend`/`reactivate` path. See docs/BILLING_ARCHITECTURE.md §4 for the full status-mapping table.
 - `Users`/`UserRole` staff-CRUD (list all staff, change role, deactivate, last-owner-protection) — only invite-create/list-pending/revoke and accept exist. `GET/PATCH/DELETE /users/*` remain unbuilt.
-- `GET /admin/users`, `GET /admin/system` — explicit Milestone 9 scope.
-- `TenantStatus.CANCELLED` transition — not wired (tied to subscription cancellation, Milestone 8).
+- `GET /admin/users`, `GET /admin/system` — still unbuilt; `GET/PATCH /admin/plans[/:id]` and `GET /admin/tenants/:id/billing` were the actual Milestone 9 admin scope and are built (docs/API_SPECIFICATION.md §16).
+- ~~`TenantStatus.CANCELLED` transition~~ — **closed, Milestone 9.** Wired automatically via Stripe's `customer.subscription.deleted`/`canceled` event, and directly for a trial-only tenant cancelling with no live Stripe subscription (`SubscriptionsService.cancel`).
 - `AuditLog.id` as app-generated UUIDv7 — deferred until real volume justifies the dependency.
 - Admin tenant list — offset pagination only, no `q`/`status` filter UI on the frontend yet (backend supports both).
 

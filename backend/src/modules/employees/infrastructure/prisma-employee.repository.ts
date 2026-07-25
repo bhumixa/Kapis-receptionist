@@ -118,4 +118,10 @@ export class PrismaEmployeeRepository
   async softDelete(tenantId: string, id: string): Promise<void> {
     await this.updateForTenant(tenantId, id, { deletedAt: new Date() });
   }
+
+  async countActiveForTenant(tenantId: string): Promise<number> {
+    return this.prisma.employee.count({
+      where: { tenantId, deletedAt: null },
+    });
+  }
 }

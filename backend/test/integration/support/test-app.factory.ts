@@ -18,16 +18,30 @@ import { RbacProbeTestModule } from './rbac-probe/rbac-probe.module';
  * `RbacProbeTestModule` (docs/adr/ADR-005-rbac.md) is mounted here only —
  * never in `src/app.module.ts` — so the RBAC guards can be proven over real
  * HTTP without a throwaway production route.
+ *
+ * `overrideProviders` (Milestone 9, docs/BILLING_ARCHITECTURE.md): lets a
+ * spec substitute a real provider with a test double before the module
+ * compiles — used by billing integration specs to replace `StripeClient`
+ * with a scripted stub so no real Stripe API spend/network dependency is
+ * needed, mirroring the AI module's own `LlmProviderPort` test-double
+ * precedent (docs/AI_ARCHITECTURE.md). Every existing call site omits it
+ * and is unaffected.
  */
-export async function createTestApp(): Promise<INestApplication> {
-  const moduleRef = await Test.createTestingModule({
+export async function createTestApp(
+  overrideProviders: Array<{ provide: unknown; useValue: unknown }> = [],
+): Promise<INestApplication> {
+  const builder = Test.createTestingModule({
     imports: [AppModule, RbacProbeTestModule],
-  }).compile();
+  });
+  for (const override of overrideProviders) {
+    builder.overrideProvider(override.provide).useValue(override.useValue);
+  }
+  const moduleRef = await builder.compile();
 
   const app = moduleRef.createNestApplication({ rawBody: true });
 
   app.setGlobalPrefix('api/v1', {
-    exclude: ['health', 'health/ready', 'webhooks/whatsapp'],
+    exclude: ['health', 'health/ready', 'webhooks/whatsapp', 'stripe/webhook'],
   });
   app.use(cookieParser());
   app.useGlobalPipes(

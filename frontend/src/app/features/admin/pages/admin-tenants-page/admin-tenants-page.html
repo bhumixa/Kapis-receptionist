@@ -44,6 +44,12 @@
             </td>
             <td class="py-3">{{ tenant.timezone }}</td>
             <td class="py-3 text-right space-x-3">
+              <a
+                [routerLink]="['/admin/tenants', tenant.id, 'billing']"
+                class="font-medium text-slate-300 hover:text-white"
+              >
+                Billing
+              </a>
               <button
                 type="button"
                 (click)="actAs(tenant)"

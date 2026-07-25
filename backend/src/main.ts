@@ -21,12 +21,13 @@ async function bootstrap() {
 
   const configService = app.get(ConfigService);
 
-  // `webhooks/whatsapp` is unversioned/unprefixed, same rationale as
-  // `health` — Meta's webhook callback URL is registered once in the App
-  // Dashboard and shouldn't move if the API's version prefix ever changes,
-  // and it isn't called through this platform's own versioned API client.
+  // `webhooks/whatsapp`/`stripe/webhook` are unversioned/unprefixed, same
+  // rationale as `health` — Meta's and Stripe's webhook callback URLs are
+  // registered once in their respective dashboards and shouldn't move if
+  // the API's version prefix ever changes, and neither is called through
+  // this platform's own versioned API client.
   app.setGlobalPrefix('api/v1', {
-    exclude: ['health', 'health/ready', 'webhooks/whatsapp'],
+    exclude: ['health', 'health/ready', 'webhooks/whatsapp', 'stripe/webhook'],
   });
 
   app.enableCors({

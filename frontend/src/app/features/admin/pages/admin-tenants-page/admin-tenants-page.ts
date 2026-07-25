@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { AdminApiService } from '../../../../core/api/admin-api.service';
 import { AuthStateService } from '../../../../core/auth/auth-state.service';
 import { Tenant } from '../../../../shared/models/tenant.model';
@@ -16,7 +16,7 @@ import { Tenant } from '../../../../shared/models/tenant.model';
 @Component({
   selector: 'app-admin-tenants-page',
   standalone: true,
-  imports: [],
+  imports: [RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './admin-tenants-page.html',
 })

@@ -6,6 +6,7 @@ import { EmployeeEntity } from '../../../src/modules/employees/domain/entities/e
 import { EmployeeRepositoryPort } from '../../../src/modules/employees/domain/ports/employee-repository.port';
 import { EmployeeAssignmentService } from '../../../src/modules/employees/application/employee-assignment.service';
 import { EmployeeService } from '../../../src/modules/employees/application/employee.service';
+import { EntitlementService } from '../../../src/modules/billing/application/entitlement.service';
 import {
   InvalidUserReferenceException,
   NoUpdateFieldsProvidedException,
@@ -43,6 +44,7 @@ describe('EmployeeService', () => {
   >;
   let auditLog: jest.Mocked<Pick<AuditLogService, 'record'>>;
   let prisma: { user: { findFirst: jest.Mock } };
+  let entitlements: jest.Mocked<Pick<EntitlementService, 'assertWithinLimit'>>;
   let service: EmployeeService;
 
   beforeEach(() => {
@@ -53,6 +55,7 @@ describe('EmployeeService', () => {
       create: jest.fn(),
       update: jest.fn(),
       softDelete: jest.fn(),
+      countActiveForTenant: jest.fn().mockResolvedValue(0),
     };
     assignments = {
       validateServiceIds: jest.fn(),
@@ -60,11 +63,15 @@ describe('EmployeeService', () => {
     };
     auditLog = { record: jest.fn() };
     prisma = { user: { findFirst: jest.fn() } };
+    entitlements = {
+      assertWithinLimit: jest.fn().mockResolvedValue(undefined),
+    };
     service = new EmployeeService(
       repo,
       assignments as unknown as EmployeeAssignmentService,
       auditLog as unknown as AuditLogService,
       prisma as unknown as PrismaService,
+      entitlements as unknown as EntitlementService,
     );
   });
 

@@ -1254,20 +1254,24 @@ model MessageStatus {
 
 ## 10. Billing Models
 
+> **Built Milestone 9 (docs/adr/ADR-012-billing-and-subscriptions.md)** — as-built, with these deviations from the code block below: `Subscription.stripeCustomerId` is **nullable** (`String?`), not required — see §10.1's own "Amended" note for the reason. `Plan` gained two columns beyond this design (`maxAppointmentsPerMonth Int?`, `maxStorageMb Int?`) to cover the appointment- and storage-limit gates `docs/FEATURE_ENTITLEMENTS.md` documents. `Invoice.invoicePdfFileId`/`invoicePdf File?` were **not built**; a plain `invoicePdfUrl String? @db.VarChar(500)` replaces them — no `File`/S3 model exists for Stripe-hosted PDFs to be mirrored into. `WebhookLog.id` uses standard `@default(dbgenerated("gen_random_uuid()"))`, not app-generated UUIDv7 as commented below — same deferred-dependency call already made for `AuditLog`/`whatsapp_webhook_events`.
+
 ```prisma
 model Plan {
-  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name                  String   @db.VarChar(50)
-  stripePriceId         String   @unique @db.VarChar(100)
-  monthlyPriceCents     Int
-  currency              String   @default("USD") @db.Char(3)
-  maxStaff              Int?
-  maxMessagesPerMonth   Int?
-  maxLocations          Int      @default(1)
-  isActive              Boolean  @default(true)
-  trialDays             Int      @default(14)
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                    String   @db.VarChar(50)
+  stripePriceId           String   @unique @db.VarChar(100)
+  monthlyPriceCents       Int
+  currency                String   @default("USD") @db.Char(3)
+  maxStaff                Int?
+  maxMessagesPerMonth     Int?
+  maxLocations            Int      @default(1)
+  maxAppointmentsPerMonth Int?
+  maxStorageMb            Int?
+  isActive                Boolean  @default(true)
+  trialDays               Int      @default(14)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 
   subscriptions Subscription[]
 
@@ -1276,22 +1280,22 @@ model Plan {
 }
 
 model Subscription {
-  id                            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId                      String              @unique @db.Uuid
-  planId                        String              @db.Uuid
-  stripeCustomerId               String              @db.VarChar(100)
-  stripeSubscriptionId           String?             @unique @db.VarChar(100)
-  status                        SubscriptionStatus  @default(TRIALING)
-  currentPeriodStart            DateTime?
-  currentPeriodEnd              DateTime?
-  cancelAtPeriodEnd             Boolean             @default(false)
-  canceledAt                    DateTime?
-  couponId                      String?             @db.Uuid
-  messagesUsedCurrentPeriod     Int                 @default(0)
-  createdAt                     DateTime            @default(now())
-  updatedAt                     DateTime            @updatedAt
-  updatedByType                 ActorType           @default(SYSTEM)
-  updatedById                   String?             @db.Uuid
+  id                         String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId                   String             @unique @db.Uuid
+  planId                     String             @db.Uuid
+  stripeCustomerId           String?            @db.VarChar(100)
+  stripeSubscriptionId       String?            @unique @db.VarChar(100)
+  status                     SubscriptionStatus @default(TRIALING)
+  currentPeriodStart         DateTime?
+  currentPeriodEnd           DateTime?
+  cancelAtPeriodEnd          Boolean            @default(false)
+  canceledAt                 DateTime?
+  couponId                   String?            @db.Uuid
+  messagesUsedCurrentPeriod  Int                @default(0)
+  createdAt                  DateTime           @default(now())
+  updatedAt                  DateTime           @updatedAt
+  updatedByType               ActorType          @default(SYSTEM)
+  updatedById                String?            @db.Uuid
 
   tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   plan     Plan      @relation(fields: [planId], references: [id], onDelete: Restrict)
@@ -1304,24 +1308,23 @@ model Subscription {
 }
 
 model Invoice {
-  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId          String        @db.Uuid
-  subscriptionId    String        @db.Uuid
-  stripeInvoiceId   String        @unique @db.VarChar(100)
-  amountDueCents    Int
-  amountPaidCents   Int
-  currency          String        @db.Char(3)
-  status            InvoiceStatus
-  invoicePdfFileId  String?       @db.Uuid
-  issuedAt          DateTime
-  dueAt             DateTime?
-  paidAt            DateTime?
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String        @db.Uuid
+  subscriptionId  String        @db.Uuid
+  stripeInvoiceId String        @unique @db.VarChar(100)
+  amountDueCents  Int
+  amountPaidCents Int
+  currency        String        @db.Char(3)
+  status          InvoiceStatus
+  invoicePdfUrl   String?       @db.VarChar(500)
+  issuedAt        DateTime
+  dueAt           DateTime?
+  paidAt          DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
-  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  subscription Subscription  @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  invoicePdf   File?         @relation(fields: [invoicePdfFileId], references: [id], onDelete: SetNull)
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
   payments     Payment[]
 
   @@index([tenantId, issuedAt], name: "idx_invoices_tenant_issued")
@@ -1394,13 +1397,13 @@ model WebhookLog {
 
 **`Plan`** — *Purpose:* global, seeded subscription-tier reference data. *Constraints:* `stripePriceId` unique. *Business rule:* retired plans are deactivated (`isActive = false`), never deleted, since historical `Subscription` rows must retain a valid reference — this is why `Subscription.plan` uses `onDelete: Restrict` rather than `Cascade`.
 
-**`Subscription`** — *Purpose:* the single, consolidated billing-state model satisfying both "TenantSubscription" and "Subscription" from the requested model list (Section 0). *Constraints:* `tenantId` unique (1:1 with `Tenant`); `stripeSubscriptionId` unique (nullable — null during a trial with no payment method yet attached). *Relations:* `plan` uses `onDelete: Restrict` (above); `coupon` optional with `onDelete: SetNull`. *Business rule:* `status` is authoritatively driven by Stripe webhooks (`updatedByType` defaults to `SYSTEM`), not direct application writes — this model is a queryable mirror, not the source of truth (DATABASE_DESIGN.md 3.8.2).
+**`Subscription`** — *Purpose:* the single, consolidated billing-state model satisfying both "TenantSubscription" and "Subscription" from the requested model list (Section 0). *Constraints:* `tenantId` unique (1:1 with `Tenant`); `stripeSubscriptionId` unique (nullable — null during a trial with no payment method yet attached). *Relations:* `plan` uses `onDelete: Restrict` (above); `coupon` optional with `onDelete: SetNull`. *Business rule:* `status` is authoritatively driven by Stripe webhooks (`updatedByType` defaults to `SYSTEM`), not direct application writes — this model is a queryable mirror, not the source of truth (DATABASE_DESIGN.md 3.8.2). **Amended, Milestone 9:** `stripeCustomerId` is nullable, populated lazily at first Checkout — a row already exists (`TRIALING`, `stripeCustomerId: null`) from the moment of tenant registration, since `EntitlementService.getOrCreateForTenant` (called on nearly every tenant-scoped write path — `docs/FEATURE_ENTITLEMENTS.md`) must never require a live Stripe call just to read this row. See docs/adr/ADR-012's central design decision.
 
-**`Invoice` / `Payment`** — *Purpose:* local mirrors of Stripe's own invoice/payment-intent objects, structured to match Stripe's hierarchy 1:1 for easy reconciliation (DATABASE_DESIGN.md 4.2). *Relations:* `Payment.invoice` is optional with `onDelete: SetNull` (a payment attempt can exist before/without a finalized invoice in some Stripe flows); `Invoice.invoicePdf` optional `File` reference, `onDelete: SetNull`. *Cascade:* both `onDelete: Cascade` from `Tenant`/`Subscription` respectively — these are tenant-owned billing artifacts, never independently meaningful.
+**`Invoice` / `Payment`** — *Purpose:* local mirrors of Stripe's own invoice/payment-intent objects, structured to match Stripe's hierarchy 1:1 for easy reconciliation (DATABASE_DESIGN.md 4.2). *Relations:* `Payment.invoice` is optional with `onDelete: SetNull` (a payment attempt can exist before/without a finalized invoice in some Stripe flows). *Cascade:* both `onDelete: Cascade` from `Tenant`/`Subscription` respectively — these are tenant-owned billing artifacts, never independently meaningful. **Amended, Milestone 9:** `Invoice.invoicePdfFileId`/`invoicePdf File?` were not built; `invoicePdfUrl String?` stores Stripe's own hosted-invoice URL directly — no `File`/S3 model exists in this codebase for a Stripe-hosted PDF to be mirrored into.
 
 **`Coupon`** — *Purpose:* global, platform-wide discount codes. *Constraints:* `code` and `stripeCouponId` both unique. *Relations:* referenced by `Subscription.couponId` — a coupon in active use cannot be hard-deleted without first nulling out every referencing subscription (`onDelete: SetNull` on that side handles this automatically, so `Coupon` itself has no `onDelete` restriction to declare).
 
-**`WebhookLog`** — *Purpose:* raw inbound event log for non-WhatsApp providers (primarily Stripe), mirroring `WebhookEvent`'s role and design exactly (Section 9.1) — kept as a **separate model** rather than a shared polymorphic table because Stripe and Meta events have different processing pipelines, different signature-verification mechanisms, and different downstream consumers (`Billing` vs. `WhatsApp`/`AI` modules), and conflating them into one table would force nullable, provider-specific columns onto every row regardless of source. *Constraints:* `(provider, providerEventId)` unique — Stripe's own idempotency key, dedup at ingestion (SYSTEM_ARCHITECTURE.md 9.1's "Software & Data Integrity" mitigation).
+**`WebhookLog`** — *Purpose:* raw inbound event log for non-WhatsApp providers (primarily Stripe), mirroring `WebhookEvent`'s role and design exactly (Section 9.1) — kept as a **separate model** rather than a shared polymorphic table because Stripe and Meta events have different processing pipelines, different signature-verification mechanisms, and different downstream consumers (`Billing` vs. `WhatsApp`/`AI` modules), and conflating them into one table would force nullable, provider-specific columns onto every row regardless of source. *Constraints:* `(provider, providerEventId)` unique — Stripe's own idempotency key, dedup at ingestion (SYSTEM_ARCHITECTURE.md 9.1's "Software & Data Integrity" mitigation). **Amended, Milestone 9:** `id` uses standard `gen_random_uuid()`, not app-generated UUIDv7 as this section's code comment specifies — same deferred-dependency call already made for `AuditLog`/`whatsapp_webhook_events`.
 
 ---
 

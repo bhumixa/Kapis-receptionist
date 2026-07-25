@@ -1275,47 +1275,90 @@ Tag: `AI`. Base path: `/api/v1/ai`.
 
 ## 13. Billing Endpoints
 
-Tag: `Billing`. Base paths: `/api/v1/plans`, `/api/v1/subscriptions`, `/api/v1/invoices`, `/api/v1/stripe`.
+Tag: `Billing`. Base paths: `/api/v1/plans`, `/api/v1/subscriptions`, `/api/v1/invoices`, `/api/v1/payments`, `/api/v1/stripe`.
+
+**Built Milestone 9 (docs/adr/ADR-012-billing-and-subscriptions.md)** — as-built, with these deviations/additions from the design below: `POST /subscriptions/change-plan`, `POST /subscriptions/cancel`, `POST /subscriptions/reactivate`, and `POST /subscriptions/portal-session` are new endpoints not in the original design (the original `POST /subscriptions` only covered initial Checkout/plan-switch — the approved "immediate with proration" plan-change decision and the grace-period cancel/reactivate lifecycle needed their own dedicated actions, mirroring the `POST /admin/tenants/:id/{suspend,reactivate}` action-endpoint convention already established in Section 16). `GET /payments` is new (not in the original 5-endpoint count) — payment history is a distinct resource from `GET /invoices`, one row per Stripe `PaymentIntent` rather than per billing-cycle invoice. Full as-built reference: docs/BILLING_ARCHITECTURE.md, docs/STRIPE_INTEGRATION.md, docs/FEATURE_ENTITLEMENTS.md.
 
 #### `GET /plans`
 **Purpose:** List available subscription tiers — powers the public pricing page and the in-app "change plan" screen (FR-20).
 **Auth:** Public (no account needed to view pricing). **Authorization:** None.
 **Query Params:** `filter[isActive]` (defaults to `true` — retired plans, PRISMA_SCHEMA.md 10.1, are hidden by default but retrievable by an authenticated `OWNER` reviewing their own legacy plan via `filter[isActive]=false` if still subscribed to one no longer sold).
-**Success — 200 OK:** `{ "success": true, "data": PlanDTO[] }` — no pagination (small, static resource, Section 2.4.2).
+**Success — 200 OK:** `{ "success": true, "data": PlanDTO[] }` — no pagination (small, static resource, Section 2.4.2). **As built:** 3 seeded tiers (Starter/Professional/Business), each with a placeholder `stripePriceId` (docs/adr/ADR-012 — no real Stripe account exists for this project yet).
 **Errors:** None beyond the global set.
 **Rate Limit:** Standard-Authenticated tier limit applied per-IP for unauthenticated callers (a public endpoint still needs abuse protection). **Idempotency:** N/A.
 
 #### `POST /subscriptions`
-**Purpose:** Create or change the tenant's subscription (initiate a Stripe Checkout session for a new paid plan, or switch plans, FR-20/FR-24).
-**Auth:** Required. **Authorization:** `OWNER` only (PROJECT_REQUIREMENTS.md Business Rule 8 — only the Owner manages billing).
-**Headers:** `Idempotency-Key` **required** (a duplicate call must never create two Stripe subscriptions or double-charge).
+**Purpose:** Create the tenant's paid subscription — initiates a Stripe Checkout session (FR-20/FR-24).
+**Auth:** Required. **Authorization:** `OWNER` only (PROJECT_REQUIREMENTS.md Business Rule 8 — only the Owner manages billing; enforced via `billing:manage` permission).
+**Headers:** `Idempotency-Key` **required** (a duplicate call must never create two Stripe Checkout Sessions).
 **Request Body:** `{ "planId": "uuid", "couponCode": "string | null" }`
 **Validation Rules:** `planId` must reference an active `Plan`; `couponCode` if present must resolve to a valid, non-expired, non-exhausted `Coupon`.
-**Success — 200 OK:** `{ "success": true, "data": { "subscription": SubscriptionDTO, "checkoutUrl": "https://checkout.stripe.com/..." } }` — `checkoutUrl` is present when a new payment method is required (first paid conversion from trial); absent (`null`) when switching between two already-payment-method-attached plans, in which case the change applies immediately and `subscription.status` reflects it directly.
-**Errors:** `404 PLAN_NOT_FOUND`, `422 INVALID_COUPON`, `409 SUBSCRIPTION_ALREADY_ACTIVE_ON_PLAN`.
+**Success — 200 OK:** `{ "success": true, "data": { "checkoutUrl": "https://checkout.stripe.com/..." } }`. **As built:** always returns a `checkoutUrl` (Checkout is the only path this endpoint drives — see `POST /subscriptions/change-plan` below for the already-subscribed case); on first call for a tenant, lazily creates the Stripe Customer (`Subscription.stripeCustomerId`, previously `null` — docs/adr/ADR-012's central schema decision).
+**Errors:** `404 PLAN_NOT_FOUND`, `422 INVALID_COUPON`, `503 UPSTREAM_UNAVAILABLE` (Stripe API failure, `callStripe()` mapping — docs/STRIPE_INTEGRATION.md §2.1).
 **Rate Limit:** Standard-Authenticated. **Idempotency:** **Required.**
 
 #### `GET /subscriptions`
-**Purpose:** Retrieve the tenant's current subscription state (billed as a collection endpoint per REST convention/the requested endpoint list, but semantically returns the single active `Subscription` — PRISMA_SCHEMA.md Section 0 consolidation note — since a tenant has exactly one).
+**Purpose:** Retrieve the tenant's current subscription state plus plan and live usage (FR-21).
 **Auth:** Required. **Authorization:** `OWNER`, `MANAGER`.
-**Success — 200 OK:** `{ "success": true, "data": SubscriptionDTO }` (a single object, not an array, despite the plural path — documented explicitly here since it's the one deliberate exception to this API's usual collection-returns-array convention).
-**Errors:** `404 NO_SUBSCRIPTION` (should not occur in practice — every tenant gets a `TRIALING` subscription at registration, PRISMA_SCHEMA.md 4.1's `Tenant` creation flow — but documented defensively).
+**Success — 200 OK:** `{ "success": true, "data": { "subscription": SubscriptionDTO, "plan": PlanDTO } }` (a single object, not an array, despite the plural path — documented explicitly here since it's the one deliberate exception to this API's usual collection-returns-array convention). **As built:** nests `plan` alongside `subscription` — the dashboard usage bars need both in one round trip.
+**Errors:** None beyond the global set — every tenant is guaranteed a `Subscription` row (defensive atomic backfill via `EntitlementService.getOrCreateForTenant`, docs/FEATURE_ENTITLEMENTS.md §4), so the originally-documented `404 NO_SUBSCRIPTION` never occurs in practice.
 **Rate Limit:** Standard-Authenticated. **Idempotency:** N/A.
+
+#### `POST /subscriptions/change-plan` *(Milestone 9, new)*
+**Purpose:** Switch an already-subscribed tenant to a different plan, immediately, with Stripe proration (docs/adr/ADR-012's approved "immediate with proration" decision).
+**Auth:** Required. **Authorization:** `OWNER` only, `billing:manage`.
+**Headers:** `Idempotency-Key` **required**.
+**Request Body:** `{ "planId": "uuid" }`
+**Success — 200 OK:** `{ "success": true, "data": { "subscription": SubscriptionDTO, "plan": PlanDTO } }`.
+**Errors:** `404 PLAN_NOT_FOUND`, `409 SUBSCRIPTION_ALREADY_ACTIVE_ON_PLAN`, `503 UPSTREAM_UNAVAILABLE`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** **Required.**
+
+#### `POST /subscriptions/cancel` *(Milestone 9, new)*
+**Purpose:** Cancel the tenant's subscription — schedules cancellation at period end if a live Stripe subscription exists (Stripe handles the remainder of the paid period); cancels immediately if still trial-only (nothing to bill out).
+**Auth:** Required. **Authorization:** `OWNER` only, `billing:manage`.
+**Request Body:** None.
+**Success — 200 OK:** `{ "success": true, "data": SubscriptionDTO }` (`cancelAtPeriodEnd: true`, or `status: "CANCELED"` for the trial-only case).
+**Errors:** `409 SUBSCRIPTION_ALREADY_CANCELED`, `503 UPSTREAM_UNAVAILABLE`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required (status-based idempotency).
+
+#### `POST /subscriptions/reactivate` *(Milestone 9, new)*
+**Purpose:** Undo a pending `cancelAtPeriodEnd` cancellation, before the period actually ends.
+**Auth:** Required. **Authorization:** `OWNER` only, `billing:manage`.
+**Request Body:** None.
+**Success — 200 OK:** `{ "success": true, "data": SubscriptionDTO }` (`cancelAtPeriodEnd: false`).
+**Errors:** `422 NO_STRIPE_SUBSCRIPTION` (no pending cancellation, or trial-only with nothing to reactivate), `503 UPSTREAM_UNAVAILABLE`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** Not required.
+
+#### `POST /subscriptions/portal-session` *(Milestone 9, new)*
+**Purpose:** Create a Stripe-hosted Customer Portal session — payment-method updates and self-service invoice download, so this platform never builds its own card-entry UI (docs/STRIPE_INTEGRATION.md §4).
+**Auth:** Required. **Authorization:** `OWNER` only, `billing:manage`.
+**Request Body:** None.
+**Success — 200 OK:** `{ "success": true, "data": { "url": "https://billing.stripe.com/..." } }`.
+**Errors:** `422 NO_STRIPE_SUBSCRIPTION` (tenant never completed Checkout, so has no `stripeCustomerId` yet), `503 UPSTREAM_UNAVAILABLE`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** N/A (a fresh, short-lived portal URL every call, by design — matches Stripe's own recommended usage).
 
 #### `POST /stripe/webhook`
 **Purpose:** Receive Stripe billing events (payment succeeded/failed, subscription updated/cancelled — FR-25, SYSTEM_ARCHITECTURE.md `Billing` module).
 **Auth:** Signature-verified (`Stripe-Signature` header), not bearer-token (Section 2.12). **Authorization:** None (trust is the signature).
 **Headers:** `Stripe-Signature` (required).
 **Request Body:** Stripe's native event payload (persisted verbatim to `WebhookLog.payload`, PRISMA_SCHEMA.md 10).
-**Success — 200 OK:** Empty body, returned immediately after signature verification and raw persistence (Section 2.12) — not the standard envelope, for the same reason as `POST /webhooks/whatsapp`.
-**Errors:** `401` (plain) on signature-verification failure.
-**Rate Limit:** Webhook-Ingestion. **Idempotency:** Provider-event-ID-based (Stripe's own event ID, `(provider, providerEventId)` unique constraint, PRISMA_SCHEMA.md 10.1).
+**Success — 200 OK:** Empty body, returned immediately after signature verification and raw persistence (Section 2.12) — not the standard envelope, for the same reason as `POST /webhooks/whatsapp`. **As built:** verified via the Stripe SDK's own `constructEvent`, not a hand-rolled HMAC (docs/STRIPE_INTEGRATION.md §5.1); actual event processing (subscription/invoice/payment sync) happens asynchronously off a dedicated `stripe-webhook` BullMQ queue after this endpoint returns.
+**Errors:** `401 INVALID_STRIPE_WEBHOOK_SIGNATURE` on signature-verification failure (the raw payload is still persisted for forensic visibility even on failure).
+**Rate Limit:** Webhook-Ingestion. **Idempotency:** Provider-event-ID-based — two layers: Redis `SET NX EX` fast-path (`dedup:stripe:{event.id}`) + `(provider, providerEventId)` DB unique constraint backstop (PRISMA_SCHEMA.md 10.1).
 
 #### `GET /invoices`
 **Purpose:** List billing history (FR-23).
 **Auth:** Required. **Authorization:** `OWNER`, `MANAGER`.
 **Query Params:** `filter[status][in]`; sortable: `issuedAt` (default `-issuedAt`); pagination: offset (bounded — one invoice per billing cycle, DATABASE_DESIGN.md 3.8.3 row-growth note).
 **Success — 200 OK:** `{ "success": true, "data": InvoiceDTO[], "meta": { "pagination": {...} } }`
+**Errors:** `403 FORBIDDEN`.
+**Rate Limit:** Standard-Authenticated. **Idempotency:** N/A.
+
+#### `GET /payments` *(Milestone 9, new)*
+**Purpose:** List payment attempt history (one row per Stripe `PaymentIntent`, including failed attempts with `failureCode`/`failureMessage` — distinct from `GET /invoices`, which is one row per billing cycle regardless of retry count).
+**Auth:** Required. **Authorization:** `OWNER`, `MANAGER`.
+**Query Params:** `filter[status][in]`; sortable: `createdAt` (default `-createdAt`); pagination: offset.
+**Success — 200 OK:** `{ "success": true, "data": PaymentDTO[], "meta": { "pagination": {...} } }`
 **Errors:** `403 FORBIDDEN`.
 **Rate Limit:** Standard-Authenticated. **Idempotency:** N/A.
 
@@ -1405,6 +1448,28 @@ Tag: `Admin`. Base path: `/api/v1/admin`. **`SUPER_ADMIN` only, on every endpoin
 **Errors:** `403 FORBIDDEN`, `404 NOT_FOUND`, `409 INVALID_LIFECYCLE_TRANSITION` (the tenant isn't currently `SUSPENDED`).
 **Rate Limit:** Admin. **Idempotency:** Not required.
 
+#### `GET /admin/plans` *(Milestone 9, docs/adr/ADR-012-billing-and-subscriptions.md)*
+**Purpose:** List all plans, including inactive/retired ones (unlike the public `GET /plans`, which defaults to active-only) — the platform admin's plan-management screen.
+**Auth:** Required. **Authorization:** `SUPER_ADMIN`.
+**Success — 200 OK:** `{ "success": true, "data": PlanDTO[] }`.
+**Errors:** `403 FORBIDDEN`.
+**Rate Limit:** Admin. **Idempotency:** N/A.
+
+#### `PATCH /admin/plans/:id` *(Milestone 9, docs/adr/ADR-012-billing-and-subscriptions.md)*
+**Purpose:** Edit a plan's price, limits, or active status — the mechanism by which real Stripe `stripePriceId` values replace the seeded placeholders once a live Stripe account exists (docs/STRIPE_INTEGRATION.md §6), without any code change.
+**Auth:** Required. **Authorization:** `SUPER_ADMIN`.
+**Request Body:** Partial `PlanDTO` (any subset of editable fields).
+**Success — 200 OK:** `{ "success": true, "data": PlanDTO }`.
+**Errors:** `403 FORBIDDEN`, `404 PLAN_NOT_FOUND`.
+**Rate Limit:** Admin. **Idempotency:** Not required (full-resource PATCH, safe to repeat).
+
+#### `GET /admin/tenants/:id/billing` *(Milestone 9, docs/adr/ADR-012-billing-and-subscriptions.md)*
+**Purpose:** Cross-tenant billing lookup for support — a tenant's subscription, plan, and invoice history in one call, reached from the "Billing" link on each `GET /admin/tenants` row.
+**Auth:** Required. **Authorization:** `SUPER_ADMIN`.
+**Success — 200 OK:** `{ "success": true, "data": { "tenant": TenantDTO, "subscription": SubscriptionDTO, "plan": PlanDTO, "invoices": InvoiceDTO[] } }`.
+**Errors:** `403 FORBIDDEN`, `404 NOT_FOUND` (unknown tenant id).
+**Rate Limit:** Admin. **Idempotency:** N/A.
+
 #### `GET /admin/users` *(design-only — not yet built, see amendment above)*
 **Purpose:** Cross-tenant user search/listing — support and account-management tooling (SYSTEM_ARCHITECTURE.md `Admin` module).
 **Auth:** Required. **Authorization:** `SUPER_ADMIN`.
@@ -1444,7 +1509,7 @@ The `Idempotency-Key` header (Section 2.13) is modeled as a `components.paramete
 
 ### 18.1 Endpoint Coverage Summary
 
-65 endpoints across 13 domains, exactly matching the requested list: Authentication (9), Users (5), Tenant (4), Employees (5), Services (5), Customers (5), Appointments (8), WhatsApp (6), AI (5), Billing (5), Notifications (2), Dashboard (3), Admin (3). **As-built after Milestone 3 (docs/adr/ADR-006):** Authentication gained `POST /auth/accept-invitation` (10); Tenant gained `POST/GET/DELETE /tenant/invitations*` (7); Admin's original 3 became `GET /admin/tenants` + 2 lifecycle actions built, `GET /admin/users`/`GET /admin/system` still design-only (Section 16). Users' original 5 (staff CRUD) remain entirely unbuilt. **As-built after Milestone 4 (docs/adr/ADR-007-salon-management.md):** new `Salon` domain built — `GET/PATCH /salon`, `GET/PUT /salon/business-hours`, `GET/POST/PATCH/DELETE /salon/holidays[/:id]` (8 endpoints, Section 6a) — not part of this document's original 65-endpoint request, added per the requester's explicit Milestone 4 scope. Employees/Services/Customers remain entirely unbuilt as of Milestone 4 (deferred to the renumbered Milestone 5, docs/IMPLEMENTATION_ROADMAP.md). **As-built after Milestone 5 (docs/adr/ADR-008-workforce-and-service-catalog.md):** `Employees` (5 endpoints + `PUT /employees/:id/working-hours`, `GET/POST/DELETE /employees/:id/time-off[/:id]`, `PUT /employees/:id/services` — 10 total) and `Services`/`ServiceCategories` (5 + `service-categories` CRUD — 9 total) built; `Customers` still deferred, per the requester's narrower Milestone 5 brief. **As-built after Milestone 6 (docs/adr/ADR-009-scheduling-engine.md):** `Customers` (5 endpoints, Section 9) and `Appointments` (8 endpoints, Section 10, with the per-service-employee-assignment body-shape amendment noted there) both built, closing out this document's original 13-domain, 65-endpoint core-CRUD scope entirely except `WhatsApp`/`AI`/`Billing` (Milestones 7–9) and `Users`' staff-CRUD surface (still open). **As-built after Milestone 7 (docs/adr/ADR-010-whatsapp-platform.md):** `WhatsApp` built — webhook verify/receive (Section 11), `Conversations` (`GET/PATCH`, 3 endpoints), `Messages` (`GET`/`POST .../send`, 2 endpoints), plus a new `GET/POST/DELETE /whatsapp/account` trio not in the original 6-endpoint count (9 total) — `AI`/`Billing` remain the only fully unbuilt domains.
+65 endpoints across 13 domains, exactly matching the requested list: Authentication (9), Users (5), Tenant (4), Employees (5), Services (5), Customers (5), Appointments (8), WhatsApp (6), AI (5), Billing (5), Notifications (2), Dashboard (3), Admin (3). **As-built after Milestone 3 (docs/adr/ADR-006):** Authentication gained `POST /auth/accept-invitation` (10); Tenant gained `POST/GET/DELETE /tenant/invitations*` (7); Admin's original 3 became `GET /admin/tenants` + 2 lifecycle actions built, `GET /admin/users`/`GET /admin/system` still design-only (Section 16). Users' original 5 (staff CRUD) remain entirely unbuilt. **As-built after Milestone 4 (docs/adr/ADR-007-salon-management.md):** new `Salon` domain built — `GET/PATCH /salon`, `GET/PUT /salon/business-hours`, `GET/POST/PATCH/DELETE /salon/holidays[/:id]` (8 endpoints, Section 6a) — not part of this document's original 65-endpoint request, added per the requester's explicit Milestone 4 scope. Employees/Services/Customers remain entirely unbuilt as of Milestone 4 (deferred to the renumbered Milestone 5, docs/IMPLEMENTATION_ROADMAP.md). **As-built after Milestone 5 (docs/adr/ADR-008-workforce-and-service-catalog.md):** `Employees` (5 endpoints + `PUT /employees/:id/working-hours`, `GET/POST/DELETE /employees/:id/time-off[/:id]`, `PUT /employees/:id/services` — 10 total) and `Services`/`ServiceCategories` (5 + `service-categories` CRUD — 9 total) built; `Customers` still deferred, per the requester's narrower Milestone 5 brief. **As-built after Milestone 6 (docs/adr/ADR-009-scheduling-engine.md):** `Customers` (5 endpoints, Section 9) and `Appointments` (8 endpoints, Section 10, with the per-service-employee-assignment body-shape amendment noted there) both built, closing out this document's original 13-domain, 65-endpoint core-CRUD scope entirely except `WhatsApp`/`AI`/`Billing` (Milestones 7–9) and `Users`' staff-CRUD surface (still open). **As-built after Milestone 7 (docs/adr/ADR-010-whatsapp-platform.md):** `WhatsApp` built — webhook verify/receive (Section 11), `Conversations` (`GET/PATCH`, 3 endpoints), `Messages` (`GET`/`POST .../send`, 2 endpoints), plus a new `GET/POST/DELETE /whatsapp/account` trio not in the original 6-endpoint count (9 total) — `AI`/`Billing` remain the only fully unbuilt domains. **As-built after Milestone 8 (docs/adr/ADR-011-ai-receptionist.md):** `AI` built — `POST /ai/chat`, `POST /ai/tools/{book,reschedule,cancel,faq}` (5 endpoints, Section 12), plus `PATCH /conversations/:id/assign` added to `WhatsApp` (10 total for that domain) — `Billing` remains the only fully unbuilt domain. **As-built after Milestone 9 (docs/adr/ADR-012-billing-and-subscriptions.md):** `Billing` built — `GET /plans`, `POST/GET /subscriptions`, `POST /subscriptions/{change-plan,cancel,reactivate,portal-session}`, `POST /stripe/webhook`, `GET /invoices`, `GET /payments` (11 total, versus the original 5-endpoint design — the plan-change/cancel/reactivate/portal-session/payments split from the original single `POST /subscriptions` design is explained in Section 13's amendment note) — plus `GET/PATCH /admin/plans[/:id]` and `GET /admin/tenants/:id/billing` added to `Admin` (Section 16). This closes out every domain in this document's original 13-domain request except `Users`' staff-CRUD surface and `GET /admin/users`/`GET /admin/system` (still design-only, Section 16) — the only remaining gaps.
 
 ### 18.2 Gaps Identified During This Design (Flagged, Not Silently Filled)
 

@@ -15,6 +15,10 @@ import {
 import { ROLE_RANK } from '../../../common/constants/rbac.constants';
 import { readNumberSetting } from '../../../common/utils/json-settings.util';
 import { addMinutes } from '../../../common/utils/scheduling-date.util';
+import {
+  EntitlementFeature,
+  EntitlementService,
+} from '../../billing/application/entitlement.service';
 import { AccessTokenPayload } from '../../auth/application/token.service';
 import { CustomerService } from '../../customers/application/customer.service';
 import { EmployeeService } from '../../employees/application/employee.service';
@@ -98,7 +102,31 @@ export class AppointmentsService {
     private readonly services: ServiceService,
     private readonly tenantSettings: TenantSettingsService,
     private readonly auditLog: AuditLogService,
+    private readonly entitlements: EntitlementService,
   ) {}
+
+  /** Milestone 9 (docs/FEATURE_ENTITLEMENTS.md) — shared by both `createAppointment` and `createAppointmentForAi`. */
+  private async assertWithinAppointmentLimit(
+    tenantId: string,
+    startTime: Date,
+  ): Promise<void> {
+    const periodStart = new Date(
+      Date.UTC(startTime.getUTCFullYear(), startTime.getUTCMonth(), 1),
+    );
+    const periodEnd = new Date(
+      Date.UTC(startTime.getUTCFullYear(), startTime.getUTCMonth() + 1, 1),
+    );
+    const currentCount = await this.appointments.countForTenantInRange(
+      tenantId,
+      periodStart,
+      periodEnd,
+    );
+    await this.entitlements.assertWithinLimit(
+      tenantId,
+      EntitlementFeature.APPOINTMENT_LIMIT,
+      currentCount,
+    );
+  }
 
   async listAppointments(
     tenantId: string,
@@ -136,6 +164,7 @@ export class AppointmentsService {
     request: CreateAppointmentRequest,
   ): Promise<AppointmentEntity> {
     await this.assertCustomerBelongsToTenant(tenantId, request.customerId);
+    await this.assertWithinAppointmentLimit(tenantId, request.startTime);
     const lines = await this.buildLines(
       tenantId,
       request.startTime,
@@ -193,6 +222,7 @@ export class AppointmentsService {
     aiActor: AiActorContext,
   ): Promise<AppointmentEntity> {
     await this.assertCustomerBelongsToTenant(tenantId, request.customerId);
+    await this.assertWithinAppointmentLimit(tenantId, request.startTime);
     const lines = await this.buildLines(
       tenantId,
       request.startTime,

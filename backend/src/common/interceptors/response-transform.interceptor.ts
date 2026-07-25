@@ -43,6 +43,14 @@ export class ResponseTransformInterceptor<T> implements NestInterceptor<
       return next.handle() as unknown as Observable<SuccessResponse<T>>;
     }
 
+    // Stripe webhooks (Milestone 9, API_SPECIFICATION.md Section 2.12/13):
+    // same rationale as WhatsApp above — Stripe expects a fast, empty `200`
+    // acknowledgment, not this platform's JSON envelope.
+    if (request.path.startsWith('/stripe/webhook')) {
+      // (unprefixed — excluded from the `api/v1` prefix in main.ts, same as `/health`)
+      return next.handle() as unknown as Observable<SuccessResponse<T>>;
+    }
+
     return next.handle().pipe(
       map((result) =>
         isPaginatedPayload(result)

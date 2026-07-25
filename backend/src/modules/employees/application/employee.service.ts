@@ -3,6 +3,10 @@ import { ActorType } from '@prisma/client';
 import { AuditLogService } from '../../../core/audit/audit-log.service';
 import { TenantResourceNotFoundException } from '../../../core/guards/rbac.exceptions';
 import { PrismaService } from '../../../database/prisma.service';
+import {
+  EntitlementFeature,
+  EntitlementService,
+} from '../../billing/application/entitlement.service';
 import { AccessTokenPayload } from '../../auth/application/token.service';
 import { EmployeeEntity } from '../domain/entities/employee.entity';
 import {
@@ -45,6 +49,7 @@ export class EmployeeService {
     private readonly assignments: EmployeeAssignmentService,
     private readonly auditLog: AuditLogService,
     private readonly prisma: PrismaService,
+    private readonly entitlements: EntitlementService,
   ) {}
 
   async listEmployees(
@@ -81,6 +86,13 @@ export class EmployeeService {
     actor: AccessTokenPayload,
     input: CreateEmployeeWithServicesInput,
   ): Promise<EmployeeEntity> {
+    const currentCount = await this.employees.countActiveForTenant(tenantId);
+    await this.entitlements.assertWithinLimit(
+      tenantId,
+      EntitlementFeature.EMPLOYEE_LIMIT,
+      currentCount,
+    );
+
     if (input.userId) {
       await this.assertUserLinkable(tenantId, input.userId);
     }
