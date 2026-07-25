@@ -56,7 +56,7 @@ export class NotificationsService implements OnModuleInit {
   async sendEmail(input: SendEmailInput): Promise<void> {
     if (!this.transporter) {
       this.logger.info(
-        { to: input.to, subject: input.subject },
+        { to: input.to, subject: input.subject, text: input.text },
         `[dev] Email not sent (SMTP_HOST unset) — logged instead: ${input.subject}`,
       );
       return;
